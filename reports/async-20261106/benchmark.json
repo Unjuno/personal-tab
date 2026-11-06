@@ -1,0 +1,239 @@
+{
+  "environment": {
+    "python": "3.13.5",
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "os": "Linux-6.18.57-x86_64-with-glibc2.41",
+    "observed_clock_MHz_range": [
+      2596.122,
+      2596.122
+    ],
+    "clock_fixed": false,
+    "logical_cpus": 5,
+    "gpu_used": false,
+    "backend": "Python stdlib; spawn CPU process; no tensor runtime or quantization",
+    "batch": 1,
+    "threads_per_compute_process": 1
+  },
+  "protocol": {
+    "description": "burst of 200 code-point appends after warmup, then replacement; no quality claim",
+    "repeats": 3,
+    "prefill_chars": 20000,
+    "includes_http_ime_rendering": false,
+    "synchronous_catchup": true
+  },
+  "runs": [
+    {
+      "sync": {
+        "mode": "sync",
+        "initial_chars": 20000,
+        "tail_chars": 200,
+        "initial_event_ms": 272.330246,
+        "initial_catchup_ms": 0.0,
+        "append_ack": {
+          "n": 200,
+          "p50_ms": 0.076029,
+          "p95_ms": 0.09589655,
+          "p99_ms": 0.16502898999999965,
+          "max_ms": 0.251448
+        },
+        "query": {
+          "n": 200,
+          "p50_ms": 0.00032,
+          "p95_ms": 0.00040299999999999933,
+          "p99_ms": 0.0008751099999999963,
+          "max_ms": 0.019159
+        },
+        "last_append_catchup_ms": 0.0,
+        "replace_event_ms": 228.832124,
+        "replace_catchup_ms": 0.0,
+        "final_model": {
+          "typed_chars": 20200,
+          "contexts": 19649
+        },
+        "worker": null
+      },
+      "async": {
+        "mode": "async",
+        "initial_chars": 20000,
+        "tail_chars": 200,
+        "initial_event_ms": 0.148875,
+        "initial_catchup_ms": 946.2256299998444,
+        "append_ack": {
+          "n": 200,
+          "p50_ms": 0.1462705,
+          "p95_ms": 0.20164259999999987,
+          "p99_ms": 0.27777037999999965,
+          "max_ms": 0.397789
+        },
+        "query": {
+          "n": 200,
+          "p50_ms": 0.003505,
+          "p95_ms": 0.00435745,
+          "p99_ms": 0.009605719999999499,
+          "max_ms": 0.089925
+        },
+        "last_append_catchup_ms": 114.72209399994426,
+        "replace_event_ms": 0.123636,
+        "replace_catchup_ms": 371.53970800000025,
+        "final_model": {
+          "typed_chars": 20200,
+          "contexts": 19649
+        },
+        "worker": {
+          "pid": 4092,
+          "alive": true,
+          "pending_count": 0,
+          "in_flight": 0,
+          "submitted": 202,
+          "coalesced": 198,
+          "completed": 4,
+          "completed_id": 202,
+          "error": null
+        }
+      },
+      "final_counts_equal": true
+    },
+    {
+      "sync": {
+        "mode": "sync",
+        "initial_chars": 20000,
+        "tail_chars": 200,
+        "initial_event_ms": 224.07787,
+        "initial_catchup_ms": 0.0,
+        "append_ack": {
+          "n": 200,
+          "p50_ms": 0.07827300000000001,
+          "p95_ms": 0.16159419999999994,
+          "p99_ms": 0.29998543999999944,
+          "max_ms": 0.450989
+        },
+        "query": {
+          "n": 200,
+          "p50_ms": 0.00031,
+          "p95_ms": 0.0003514499999999999,
+          "p99_ms": 0.00042050999999999954,
+          "max_ms": 0.000731
+        },
+        "last_append_catchup_ms": 0.0,
+        "replace_event_ms": 249.105432,
+        "replace_catchup_ms": 0.0,
+        "final_model": {
+          "typed_chars": 20200,
+          "contexts": 19649
+        },
+        "worker": null
+      },
+      "async": {
+        "mode": "async",
+        "initial_chars": 20000,
+        "tail_chars": 200,
+        "initial_event_ms": 0.13251,
+        "initial_catchup_ms": 926.3959239999622,
+        "append_ack": {
+          "n": 200,
+          "p50_ms": 0.0993545,
+          "p95_ms": 0.1872145499999999,
+          "p99_ms": 0.3899066999999997,
+          "max_ms": 0.433393
+        },
+        "query": {
+          "n": 200,
+          "p50_ms": 0.003375,
+          "p95_ms": 0.0037959999999999964,
+          "p99_ms": 0.008264879999999825,
+          "max_ms": 0.049835
+        },
+        "last_append_catchup_ms": 137.90593400017315,
+        "replace_event_ms": 0.171459,
+        "replace_catchup_ms": 404.17937899997014,
+        "final_model": {
+          "typed_chars": 20200,
+          "contexts": 19649
+        },
+        "worker": {
+          "pid": 4117,
+          "alive": true,
+          "pending_count": 0,
+          "in_flight": 0,
+          "submitted": 202,
+          "coalesced": 198,
+          "completed": 4,
+          "completed_id": 202,
+          "error": null
+        }
+      },
+      "final_counts_equal": true
+    },
+    {
+      "sync": {
+        "mode": "sync",
+        "initial_chars": 20000,
+        "tail_chars": 200,
+        "initial_event_ms": 217.685072,
+        "initial_catchup_ms": 0.0,
+        "append_ack": {
+          "n": 200,
+          "p50_ms": 0.077171,
+          "p95_ms": 0.16417929999999992,
+          "p99_ms": 0.23738847999999935,
+          "max_ms": 0.357559
+        },
+        "query": {
+          "n": 200,
+          "p50_ms": 0.000311,
+          "p95_ms": 0.00037149999999999987,
+          "p99_ms": 0.0004715999999999995,
+          "max_ms": 0.000651
+        },
+        "last_append_catchup_ms": 0.0,
+        "replace_event_ms": 223.272065,
+        "replace_catchup_ms": 0.0,
+        "final_model": {
+          "typed_chars": 20200,
+          "contexts": 19649
+        },
+        "worker": null
+      },
+      "async": {
+        "mode": "async",
+        "initial_chars": 20000,
+        "tail_chars": 200,
+        "initial_event_ms": 0.124637,
+        "initial_catchup_ms": 948.5517359998994,
+        "append_ack": {
+          "n": 200,
+          "p50_ms": 0.157948,
+          "p95_ms": 0.1845215,
+          "p99_ms": 0.19239451999999999,
+          "max_ms": 0.359992
+        },
+        "query": {
+          "n": 200,
+          "p50_ms": 0.003425,
+          "p95_ms": 0.0046275,
+          "p99_ms": 0.009270629999999858,
+          "max_ms": 0.057868
+        },
+        "last_append_catchup_ms": 81.5882760000477,
+        "replace_event_ms": 0.122164,
+        "replace_catchup_ms": 321.9704499999807,
+        "final_model": {
+          "typed_chars": 20200,
+          "contexts": 19649
+        },
+        "worker": {
+          "pid": 4128,
+          "alive": true,
+          "pending_count": 0,
+          "in_flight": 0,
+          "submitted": 202,
+          "coalesced": 199,
+          "completed": 3,
+          "completed_id": 202,
+          "error": null
+        }
+      },
+      "final_counts_equal": true
+    }
+  ]
+}

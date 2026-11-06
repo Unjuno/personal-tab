@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Personal Tab — CPU local experiment</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#1e293b;background:#f4f6f9}body{max-width:900px;margin:40px auto;padding:0 24px}h1{font-size:29px;margin-bottom:8px}.small{color:#526375;font-size:13px;line-height:1.8}.card{background:white;border:1px solid #dbe2ea;border-radius:12px;padding:24px;margin:20px 0}.editor-shell{position:relative;margin-top:16px}.editor-layer{box-sizing:border-box;width:100%;border:1px solid #aebccb;border-radius:8px;padding:16px;font:17px/1.9 ui-monospace,monospace;letter-spacing:normal;tab-size:4;white-space:pre-wrap;overflow-wrap:break-word;word-break:normal}textarea.editor-layer{position:relative;display:block;height:300px;background:transparent;resize:vertical;color:#1e293b;z-index:2}.mirror{position:absolute;top:0;left:0;overflow:hidden;pointer-events:none;z-index:1;color:transparent;border-color:transparent}#ghost{color:#8291a3}textarea:disabled{opacity:.6}button,select{font:inherit;padding:7px 13px;border:1px solid #b4c1ce;border-radius:6px;background:white;margin-right:8px}.proposal{min-height:30px;font:17px/1.8 ui-monospace,monospace;color:#60748a}.bar{display:flex;gap:12px;flex-wrap:wrap;align-items:center}label{line-height:1.8}.warning,#error{color:#a3410b}.tag{font:12px system-ui;background:#eaf0f5;padding:4px 8px;border-radius:5px}kbd{font:inherit;background:#edf1f6;padding:1px 6px;border-radius:3px}
+</style></head><body>
+<div class="bar"><span class="tag">CPU ONLY</span><span class="tag">LOCAL · EXPERIMENTAL v0.2</span></div>
+<h1>書いた表現を、次のTabへ。</h1>
+<p class="small">入力記録と補完は手元のプロセス、学習は別のCPUプロセスで行います。外部のモデルAPIには送信しません。</p>
+<div class="card">
+<div class="bar"><label><input type="checkbox" id="consent">このエディタの入力記録・学習を有効にする</label><select id="mode" aria-label="補完方式"><option value="terms">用語メモリ</option><option value="statistical">統計予測（実験用）</option></select></div>
+<p class="small">最初の記憶は空です。「コンピュータ。コンピュータ。」を手入力し、続けて「コンピ」と入力すると、既に書いた用語の続きを提案します。</p>
+<div class="editor-shell"><div class="editor-layer mirror" id="mirror" aria-hidden="true"><span id="mirror-prefix"></span><span id="ghost"></span></div><textarea class="editor-layer" id="editor" disabled spellcheck="false" aria-label="学習対象の文章"></textarea></div>
+<p class="small"><kbd>Tab</kbd> 採用 ／ <kbd>Esc</kbd> 非表示。現在は文末だけを補完します。IME変換中は表示・Tab採用を抑制します。</p>
+<div class="proposal" id="proposal" aria-live="polite">—</div><div class="small" id="status">記録は無効です。</div><div id="error" class="small" role="alert"></div>
+</div>
+<div class="bar"><button id="save-memory">記憶を保存</button><label><button type="button" id="choose-memory">記憶を読み込んで置換</button><input type="file" id="load-memory" accept="application/json,.json" hidden></label><button id="export">入力トレースを書き出す</button><button id="reset">このセッションの記憶を消す</button></div>
+<p class="small warning">非機密の文章だけで試してください。通常はRAM内のみで、停止すると消えます。「記憶を保存」で次回へ引き継げます。保存JSON・トレースは平文です。貼付け・モデル採用は由来を区別し、無条件には学習しません。</p>
+<p class="small">学習中も入力できます。反映には遅れがあり、弱い候補は表示しません。削除・置換の直後は古い記憶を失効させ、再構築まで補完を控えます。実用的な補完品質・時短は未達／未検証です。</p>
+<script>
+const TOKEN='__SESSION_TOKEN__', ed=document.querySelector('#editor'), consent=document.querySelector('#consent'), proposal=document.querySelector('#proposal'), status=document.querySelector('#status'), errorBox=document.querySelector('#error'), ghost=document.querySelector('#ghost'), prefix=document.querySelector('#mirror-prefix'), mirror=document.querySelector('#mirror'), mode=document.querySelector('#mode');
+const DOC='document'; // one active editor tab per server session
+let previous='', sequence=0, ackSequence=0, currentVersion=0, suggestion='', composing=false, origin='typed', queue=Promise.resolve(), pendingCount=0, generation=0, timer=null, pollSerial=0, resetBusy=false, failed=false, dismissed=-1;
+Object.defineProperty(window,'__testState',{get:()=>({idle:pendingCount===0&&!resetBusy,sequence,ackSequence,composing})});
+async function post(path,data){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Tab-Token':TOKEN},body:JSON.stringify(data)});const out=await r.json();if(!r.ok)throw Error(out.error||r.status);return out;}
+function atEnd(){return ed.selectionStart===ed.selectionEnd&&ed.selectionEnd===ed.value.length;}
+function paint(){prefix.textContent=ed.value;ghost.textContent=(!composing&&consent.checked&&atEnd())?suggestion:'';mirror.style.width=(ed.clientWidth+2)+'px';mirror.style.height=(ed.clientHeight+2)+'px';mirror.scrollTop=ed.scrollTop;mirror.scrollLeft=ed.scrollLeft;proposal.textContent=suggestion||'—';}
+function cancelPoll(){clearTimeout(timer);timer=null;pollSerial++;}
+function clear(){suggestion='';paint();}
+function fail(e){failed=true;cancelPoll();clear();consent.checked=false;ed.disabled=true;errorBox.textContent='処理を停止しました：'+e.message+'。リセットして再開してください。';}
+function render(out){if(out.learning_error){errorBox.textContent=out.learning_error;return;}errorBox.textContent='';status.textContent=`学習済み：${out.typed_training_chars??0}文字 / 記憶語：${out.unique_words??0} / ${out.learning_pending?'学習反映待ち（入力できます）':'学習反映済み'}`;if(!suggestion&&dismissed!==sequence&&!out.stale&&atEnd()&&out.cursor===[...ed.value].length){suggestion=out.suggestion||'';paint();}}
+function pollSuggestions(gen,seq,serial,attempt=0){
+ if(failed||resetBusy||gen!==generation||seq!==sequence||composing||!consent.checked||!atEnd()||dismissed===seq)return;
+ timer=setTimeout(async()=>{try{
+  const out=await post('/suggestion',{doc_id:DOC,version:currentVersion,cursor:[...ed.value].length,mode:mode.value});
+  if(gen!==generation||seq!==sequence||serial!==pollSerial||composing||!consent.checked||!atEnd())return;
+  render(out);
+  if(out.learning_pending&&!out.learning_error&&attempt<200)pollSuggestions(gen,seq,serial,attempt+1);
+ }catch(e){if(gen===generation&&seq===sequence)fail(e);}},40);
+}
+function capture(){
+ if(!consent.checked||composing||resetBusy||failed)return;
+ const value=ed.value;if(value===previous){origin='typed';return;}
+ const old=[...previous],fresh=[...value];let a=0,b=0;
+ while(a<old.length&&a<fresh.length&&old[a]===fresh[a])a++;
+ while(b<old.length-a&&b<fresh.length-a&&old[old.length-1-b]===fresh[fresh.length-1-b])b++;
+ const text=fresh.slice(a,fresh.length-b).join('');
+ const ev={doc_id:DOC,sequence:++sequence,input_mono_ms:performance.now(),kind:a===old.length&&b===0?'insert':'replace',start:a,end:old.length-b,text,origin,allowed:true,mode:mode.value};
+ origin='typed';previous=value;dismissed=-1;cancelPoll();clear();
+ const gen=generation;pendingCount++;
+ queue=queue.then(async()=>{if(failed)return;const out=await post('/event',ev);
+  if(gen===generation&&ev.sequence===sequence&&consent.checked&&!composing){ackSequence=ev.sequence;currentVersion=out.version;if(ev.mode===mode.value)render(out);if(out.learning_pending||ev.mode!==mode.value)pollSuggestions(gen,sequence,pollSerial);}
+ }).catch(e=>{if(gen===generation)fail(e);}).finally(()=>{pendingCount--;});
+}
+consent.onchange=()=>{ed.disabled=!consent.checked||failed;generation++;cancelPoll();clear();status.textContent=consent.checked?'この入力欄だけを記録中。':'以後の記録を停止しました。記憶の消去はリセット。';if(consent.checked&&!failed)ed.focus();};
+ed.addEventListener('compositionstart',()=>{composing=true;cancelPoll();clear();});
+ed.addEventListener('compositionend',()=>{composing=false;setTimeout(capture,0);});
+ed.addEventListener('paste',()=>{origin='paste';});
+ed.addEventListener('beforeinput',e=>{if(['insertFromPaste','insertFromDrop','historyUndo','historyRedo'].includes(e.inputType))origin='paste';});
+ed.addEventListener('input',e=>{paint();if(!e.isComposing)capture();});
+ed.addEventListener('scroll',paint);new ResizeObserver(paint).observe(ed);
+ed.addEventListener('select',()=>{if(!atEnd()){cancelPoll();clear();}});
+ed.addEventListener('click',()=>{if(!atEnd()){cancelPoll();clear();}else if(ackSequence===sequence){cancelPoll();pollSuggestions(generation,sequence,pollSerial);}});
+ed.addEventListener('keydown',e=>{
+ if(composing||e.isComposing)return;
+ if(e.key==='Escape'){dismissed=sequence;cancelPoll();clear();return;}
+ if(e.key==='Tab'&&suggestion&&ackSequence===sequence&&consent.checked&&!resetBusy&&atEnd()){
+  e.preventDefault();origin='model';ed.setRangeText(suggestion,ed.selectionStart,ed.selectionEnd,'end');capture();return;
+ }
+ if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'].includes(e.key)){cancelPoll();clear();}
+});
+mode.onchange=()=>{dismissed=-1;cancelPoll();clear();if(ackSequence===sequence)pollSuggestions(generation,sequence,pollSerial);};
+document.querySelector('#export').onclick=async()=>{try{await queue;const r=await fetch('/trace',{headers:{'X-Tab-Token':TOKEN}});if(!r.ok)throw Error('export failed');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(await r.json(),null,2)],{type:'application/json'}));a.download='personal_tab_trace.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}catch(e){fail(e);}};
+document.querySelector('#reset').onclick=async()=>{
+ if(resetBusy)return;resetBusy=true;generation++;cancelPoll();clear();ed.disabled=true;
+ try{await queue;await post('/reset',{});ed.value='';previous='';sequence=ackSequence=currentVersion=0;dismissed=-1;failed=false;errorBox.textContent='';clear();status.textContent='記憶を消しました。';}
+ catch(e){fail(e);}finally{resetBusy=false;ed.disabled=!consent.checked||failed;if(!ed.disabled)ed.focus();}
+};
+function downloadJSON(value,name){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
+document.querySelector('#save-memory').onclick=async()=>{try{await queue;const r=await fetch('/memory',{headers:{'X-Tab-Token':TOKEN}});if(!r.ok)throw Error('memory export failed');downloadJSON(await r.json(),'personal_tab_memory.json');}catch(e){errorBox.textContent=e.message;}};
+document.querySelector('#choose-memory').onclick=()=>{if(!consent.checked){errorBox.textContent='読み込む前に、このエディタの学習を許可してください。';return;}document.querySelector('#load-memory').click();};
+document.querySelector('#load-memory').onchange=async function(){
+ const file=this.files[0];if(!file||resetBusy||!consent.checked)return;
+ if(file.size>950000){errorBox.textContent='メモリファイルが大きすぎます（950KBまで）。';this.value='';return;}
+ resetBusy=true;generation++;cancelPoll();clear();ed.disabled=true;
+ try{await queue;const memory=JSON.parse(await file.text());const out=await post('/memory',{allowed:true,memory});ed.value=previous=out.text;sequence=ackSequence=0;currentVersion=out.version;failed=false;dismissed=-1;errorBox.textContent='';clear();status.textContent='記憶を再構築中。';}
+ catch(e){errorBox.textContent='読み込みを中止しました：'+e.message;}
+ finally{resetBusy=false;this.value='';ed.disabled=!consent.checked||failed;if(!ed.disabled){ed.focus();ed.setSelectionRange(ed.value.length,ed.value.length);pollSuggestions(generation,sequence,pollSerial);}}
+};paint();
+</script></body></html>

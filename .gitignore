@@ -1,0 +1,25 @@
+# Never publish private input or trained user state.
+.env
+.env.*
+*.pem
+*.key
+personal_tab_trace*.json
+personal_tab_memory*.json
+user_data/
+private/
+sessions/
+exports/
+artifacts/
+*.pt
+*.pth
+*.pkl
+*.pickle
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+*.log
+.DS_Store
