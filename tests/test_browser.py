@@ -105,9 +105,10 @@ def test_browser_two_tabs_are_not_simultaneously_writable():
                 first.close()
                 # pagehide keepalive release is asynchronous; retry without stealing the lease.
                 for _ in range(30):
-                    second.locator('#claim-lease').click()
                     if second.evaluate('leaseReady'):
                         break
+                    if second.locator('#claim-lease').is_visible():
+                        second.locator('#claim-lease').click()
                     time.sleep(.1)
                 second.wait_for_function('leaseReady',timeout=5000)
                 assert second.locator('#editor').input_value()=='最初のタブの文章。'

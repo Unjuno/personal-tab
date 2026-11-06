@@ -19,7 +19,7 @@
   "tests/test_async_http.py": "c3ca0d01aa0be02479959a4a8318cf819177c6a2edf8ac48285ab47d93eb05e2",
   "tests/test_async_memory.py": "4c72c1c439313ef81fc8699868a024bf8681bafca71751ce11ddc90bc349e963",
   "tests/test_autosave_browser.py": "6781d75b46326aadcb52b0c70ec9d1761c58edf52b6f636f6de959eb6ecb217c",
-  "tests/test_browser.py": "3a937088f84eb9d7fe3ef6c706d4d867401ce7fca85258d02f8a51237da2344a",
+  "tests/test_browser.py": "499c1c9f525d51922e7ea8dae2a2720960a2552dd375c79e2e312476aad6ad2d",
   "tests/test_browser_dom.py": "be4edb1a5b20436cd2ede1b4b2fa84a7f90d2605f8520b2931cc2268d4d20c6e",
   "tests/test_container_server.py": "1efcc9aab5b972a0c6d2761916912d5fd96c8491b2902182b07f2b26ed9f0bb2",
   "tests/test_core.py": "9fe725be5c903e108a807a2b65a250d0ae77da5efd49c8587096b3d88f7855cf",
