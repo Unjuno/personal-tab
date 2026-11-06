@@ -17,7 +17,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .brand-mark{width:34px;height:34px;border-radius:10px;background:#1c3b55;display:grid;place-items:center;color:#fff;font-family:ui-monospace,monospace;font-size:19px}
 .top-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .tag{font-size:11px;letter-spacing:.04em;font-weight:700;background:#edf2f7;color:#42566a;padding:6px 9px;border-radius:6px;text-transform:uppercase}
-#phase{background:#eaf2fa;color:#244f77}body[data-interaction-phase="error"] #phase{background:#fff1ed;color:#a33d21}body[data-interaction-phase="offered"] #phase{background:#e9f6ed;color:#287447}
+#phase{background:#eaf2fa;color:#244f77}body[data-interaction-phase="error"] #phase{background:#fff1ed;color:#a33d21}body[data-interaction-phase="offered"] #phase{background:#e9f6ed;color:#287447}body[data-interaction-phase="degraded"] #phase{background:#fff4e9;color:#a46116}
 .page{max-width:1200px;margin:0 auto;padding:38px 24px 48px}
 .intro{margin-bottom:26px}.eyebrow{color:#60788e;font-weight:700;letter-spacing:.14em;text-transform:uppercase;font-size:11px;margin:0 0 8px}
 h1{margin:0;font-size:clamp(25px,3.2vw,35px);font-weight:760;letter-spacing:-.04em;line-height:1.3}h2{font-size:17px;letter-spacing:-.02em;margin:0}
@@ -116,31 +116,32 @@ kbd{display:inline-block;font-size:11px;font-weight:700;background:#f3f6fa;borde
 <script>
 const TOKEN='__SESSION_TOKEN__', ed=document.querySelector('#editor'), consent=document.querySelector('#consent'), proposal=document.querySelector('#proposal'), status=document.querySelector('#status'), errorBox=document.querySelector('#error'), ghost=document.querySelector('#ghost'), prefix=document.querySelector('#mirror-prefix'), mirror=document.querySelector('#mirror'), mode=document.querySelector('#mode');
 const DOC='document'; // one active editor tab per server session
-let previous='', sequence=0, ackSequence=0, currentVersion=0, suggestion='', composing=false, origin='typed', queue=Promise.resolve(), pendingCount=0, generation=0, timer=null, pollSerial=0, resetBusy=false, failed=false, dismissed=-1, candidateIdentity=null, trainingPending=false;
+let previous='', sequence=0, ackSequence=0, currentVersion=0, suggestion='', composing=false, origin='typed', queue=Promise.resolve(), pendingCount=0, generation=0, timer=null, pollSerial=0, resetBusy=false, failed=false, dismissed=-1, candidateIdentity=null, trainingPending=false, learningFailed=false;
 Object.defineProperty(window,'__testState',{get:()=>({idle:pendingCount===0&&!resetBusy,sequence,ackSequence,composing,phase:interactionPhase(),version:currentVersion})});
 async function post(path,data){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Tab-Token':TOKEN},body:JSON.stringify(data)});const out=await r.json();if(!r.ok)throw Error(out.error||r.status);return out;}
 function atEnd(){return ed.selectionStart===ed.selectionEnd&&ed.selectionEnd===ed.value.length;}
 // A proposal is bound to a concrete UI and canonical-document generation.
 function candidateIsCurrent(){
- return Boolean(suggestion&&candidateIdentity&&!failed&&!resetBusy&&!composing&&consent.checked&&atEnd()&&
+ return Boolean(suggestion&&candidateIdentity&&!failed&&!learningFailed&&!resetBusy&&!composing&&consent.checked&&atEnd()&&
    candidateIdentity.generation===generation&&candidateIdentity.sequence===sequence&&pendingCount===0&&ackSequence===sequence&&
    candidateIdentity.version===currentVersion&&candidateIdentity.mode===mode.value&&
    candidateIdentity.cursor===[...ed.value].length&&dismissed!==sequence);
 }
-// Explicit precedence: error > mutation > consent > IME > unacked edit > dismissal > offered > learning > ready.
+// Explicit precedence: fatal error > mutation > consent > IME > unacked edit > degraded > dismissal > offered > learning > ready.
 function interactionPhase(){
  if(failed)return 'error';
  if(resetBusy)return 'mutating';
  if(!consent.checked)return 'locked';
  if(composing)return 'composing';
  if(pendingCount>0||ackSequence!==sequence)return 'syncing';
+ if(learningFailed)return 'degraded';
  if(dismissed===sequence&&sequence>0)return 'dismissed';
  if(candidateIsCurrent())return 'offered';
  if(trainingPending)return 'learning';
  return 'ready';
 }
 function refreshPhase(){
- const labels={error:'停止中',mutating:'記憶を更新中',locked:'記録OFF',composing:'日本語変換中',syncing:'入力を同期中',dismissed:'候補を非表示',offered:'Tabで補完',learning:'学習中',ready:'入力できます'};
+ const labels={error:'停止中',mutating:'記憶を更新中',locked:'記録OFF',composing:'日本語変換中',syncing:'入力を同期中',dismissed:'候補を非表示',offered:'Tabで補完',learning:'学習中',degraded:'学習エラー（入力可能）',ready:'入力できます'};
  const state=interactionPhase();document.body.dataset.interactionPhase=state;
  const label=document.querySelector('#phase');if(label)label.textContent=labels[state];
 }
@@ -156,8 +157,8 @@ function cancelPoll(){clearTimeout(timer);timer=null;pollSerial++;}
 function clear(){suggestion='';candidateIdentity=null;paint();}
 function fail(e){failed=true;cancelPoll();clear();consent.checked=false;ed.disabled=true;errorBox.textContent='処理を停止しました：'+e.message+'。リセットして再開してください。';refreshPhase();}
 function render(out){
- if(out.learning_error){errorBox.textContent=out.learning_error;refreshPhase();return;}
- trainingPending=Boolean(out.learning_pending);errorBox.textContent='';
+ if(out.learning_error){learningFailed=true;trainingPending=false;errorBox.textContent=out.learning_error;clear();return;}
+ learningFailed=false;trainingPending=Boolean(out.learning_pending);errorBox.textContent='';
  status.textContent=`学習済み：${out.typed_training_chars??0}文字 / 記憶語：${out.unique_words??0} / ${trainingPending?'学習反映待ち（入力できます）':'学習反映済み'}`;
  if(!suggestion&&dismissed!==sequence&&!out.stale&&out.version===currentVersion&&
     (out.sequence===undefined||out.sequence===sequence)&&atEnd()&&out.cursor===[...ed.value].length){
@@ -223,7 +224,7 @@ document.querySelector('#confirm-reset').onclick=async()=>{
  resetBusy=true;generation++;cancelPoll();clear();ed.disabled=true;
  try{
   await queue;await post('/reset',{});
-  ed.value='';previous='';sequence=ackSequence=currentVersion=0;dismissed=-1;failed=false;trainingPending=false;errorBox.textContent='';
+  ed.value='';previous='';sequence=ackSequence=currentVersion=0;dismissed=-1;failed=false;trainingPending=false;learningFailed=false;errorBox.textContent='';
   clear();status.textContent='記憶を消しました。';
  }catch(e){fail(e);}
  finally{resetBusy=false;ed.disabled=!consent.checked||failed;if(!ed.disabled)ed.focus();paint();}
@@ -254,7 +255,7 @@ document.querySelector('#confirm-import').onclick=async()=>{
   const memory=JSON.parse(await file.text());
   const out=await post('/memory',{allowed:true,memory});
   ed.value=previous=out.text;sequence=ackSequence=0;currentVersion=out.version;
-  failed=false;dismissed=-1;trainingPending=true;errorBox.textContent='';clear();status.textContent='記憶を再構築中。';
+  failed=false;dismissed=-1;trainingPending=true;learningFailed=false;errorBox.textContent='';clear();status.textContent='記憶を再構築中。';
  }catch(e){errorBox.textContent='読み込みを中止しました：'+e.message;}
  finally{
   resetBusy=false;ed.disabled=!consent.checked||failed;

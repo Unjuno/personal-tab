@@ -187,3 +187,21 @@ def test_syncing_state_never_displays_a_stale_offered_candidate(page):
     pw.expect(page.locator('#ghost')).to_have_text('')
     page.evaluate('pendingCount--;paint()')
     pw.expect(page.locator('#ghost')).to_have_text('ュータ')
+
+def test_learning_worker_failure_is_visible_but_does_not_disable_canonical_editing(page):
+    page,pw=page
+    page.keyboard.insert_text('コンピュータ。コンピュータ。コンピ')
+    pw.expect(page.locator('#ghost')).to_have_text('ュータ')
+    page.evaluate('''() => {
+      const oldFetch=window.fetch;
+      window.fetch=async (...args) => {
+        const reply=await oldFetch(...args);
+        if(args[0]!=='/suggestion')return reply;
+        const value=await reply.json();value.learning_error='learning worker unavailable';
+        return {ok:true,json:async()=>value};
+      };
+      clear();cancelPoll();pollSuggestions(generation,sequence,pollSerial);
+    }''')
+    pw.expect(page.locator('body')).to_have_attribute('data-interaction-phase','degraded',timeout=5000)
+    pw.expect(page.locator('#editor')).to_be_enabled()
+    pw.expect(page.locator('#ghost')).to_have_text('')

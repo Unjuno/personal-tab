@@ -23,11 +23,12 @@ The previous implementation effectively encoded these states as multiple mutable
 | `syncing` | one or more canonical edits unacknowledged | continue typing, no ghost | ack, error, mutation |
 | `learning` | latest confirmed edit not yet trained | continue typing; no stale proof of learning | snapshot promotion |
 | `offered` | valid candidate, current revision and cursor | Tab, Esc, type, move caret | accepted, dismissed, new edit |
+| `degraded` | asynchronous learning worker reports failure | continue canonical editing; do not offer stale candidates | healthy learning result / confirmed reset or memory import |
 | `dismissed` | Esc for current sequence | type or change mode | next edit/mode switch |
 | `mutating` | reset / memory restore | block edits; wait for canonical queue; reject old responses | operation succeeds -> ready, or error |
 | `error` | network/protocol failure | reset/recover only | successful reset |
 
-The order of precedence in the UI is `error > mutating > locked > composing > syncing > dismissed > offered > learning > ready`. An offered suggestion has a tuple-bound identity: `(request generation, edit sequence, server version, mode, cursor)`; all fields must match current state when displayed and accepted.
+The order of precedence in the UI is `error > mutating > locked > composing > syncing > degraded > dismissed > offered > learning > ready`. An offered suggestion has a tuple-bound identity: `(request generation, edit sequence, server version, mode, cursor)`; all fields must match current state when displayed and accepted.
 
 ### Training phase
 
@@ -51,7 +52,8 @@ A learning snapshot can be promoted only if its `epoch` matches the current epoc
 4. Reset/import waits for the edit queue and invalidates old results; it must not replay model-origin or paste-origin text as typed training data.
 5. Suggestions are advisory and must not overwrite input without Tab, must not be accepted mid-IME, and must have matching client and server version.
 6. Session history cannot be silently expanded to system-wide keystrokes; local input recording requires explicit opt-in.
-7. Full private data, histories and personalized weights never enter the public Git repository or public CI logs.
+7. A learning-worker failure must clear any outstanding proposal and show a degraded status while canonical editor input stays enabled. A successful learning response clears that degraded state.
+8. Full private data, histories and personalized weights never enter the public Git repository or public CI logs.
 
 ## Priority risks from code inspection
 
