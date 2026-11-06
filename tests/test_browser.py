@@ -71,3 +71,50 @@ def test_browser_real_async_tab_ime_reset_and_provenance():
             finally:browser.close()
     finally:
         process.terminate();process.communicate(timeout=5)
+
+
+def test_browser_two_tabs_are_not_simultaneously_writable():
+    pw=pytest.importorskip('playwright.sync_api')
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
+    process=subprocess.Popen([sys.executable,str(ROOT/'serve_demo.py'),'--port',str(port)],
+                             stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+    opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        for _ in range(200):
+            try:opener.open(f'http://127.0.0.1:{port}/healthz',timeout=.2);break
+            except OSError:time.sleep(.02)
+        with pw.sync_playwright() as p:
+            exe=p.chromium.executable_path if Path(p.chromium.executable_path).exists() else shutil.which('chromium')
+            if not exe:pytest.skip('Chromium not installed')
+            browser=p.chromium.launch(executable_path=exe,headless=True,args=['--no-sandbox'])
+            try:
+                first=browser.new_page();second=browser.new_page()
+                try:first.goto(f'http://127.0.0.1:{port}')
+                except pw.Error as exc:
+                    if 'ERR_BLOCKED_BY_ADMINISTRATOR' in str(exc) and not os.environ.get('PERSONAL_TAB_REQUIRE_E2E'):
+                        pytest.skip('Managed Chromium blocks local HTTP')
+                    raise
+                first.wait_for_function('leaseReady')
+                first.locator('#consent').check()
+                first.locator('#editor').fill('最初のタブの文章。')
+                first.wait_for_function('window.__testState.idle')
+                second.goto(f'http://127.0.0.1:{port}')
+                second.locator('#lease-warning').wait_for(state='visible')
+                assert second.locator('#editor').is_disabled()
+                first.close()
+                # pagehide keepalive release is asynchronous; retry without stealing the lease.
+                for _ in range(30):
+                    second.locator('#claim-lease').click()
+                    if second.evaluate('leaseReady'):
+                        break
+                    time.sleep(.1)
+                second.wait_for_function('leaseReady',timeout=5000)
+                assert second.locator('#editor').input_value()=='最初のタブの文章。'
+                second.locator('#consent').check()
+                second.locator('#editor').fill('最初のタブの文章。続きを記録します。')
+                second.wait_for_function('window.__testState.idle')
+                assert second.locator('body').get_attribute('data-interaction-phase') not in ('blocked','error')
+            finally:browser.close()
+    finally:
+        process.terminate();process.wait(timeout=5);process.stderr.close()

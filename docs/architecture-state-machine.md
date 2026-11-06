@@ -5,7 +5,7 @@ Status: design for CPU-only experimental editor, 2026-11-06. The current app onl
 ## Objectives and boundaries
 
 - **User goal:** type ordinarily, see one short, useful continuation, accept with Tab; learn from confirmed self-authored input and adapt over time without requiring a GPU or model API.
-- **Non-goals for this increment:** FIM, next edit location, true knowledge reasoning, always-on background key capture, multi-user sync, automatic encrypted persistence, native Japanese IME certification, proof of productivity improvement.
+- **Non-goals for this increment:** FIM, next edit location, true knowledge reasoning, always-on background key capture, multi-user sync, unattended server-side persistence, native Japanese IME certification, proof of productivity improvement.
 - **Data authority:** the canonical document and origin mask, not the predictor weights or the UI's ghost text. A proposal is never a training target unless the user independently types it.
 - **CPU architecture:** browser interaction -> token-protected local HTTP -> versioned canonical session -> worker-bound learning -> immutable/safe snapshot adoption -> suggestion query -> browser guard -> ghost. Worker failure never blocks canonical editing.
 
@@ -17,6 +17,7 @@ The previous implementation effectively encoded these states as multiple mutable
 
 | State | Entry event | Allowed action | Exit |
 |---|---|---|---|
+| `blocked` | another page owns the server writer lease | retry lease, copy unsent draft | previous page releases/lease expires |
 | `locked` | first load / consent revoked | opt-in, non-sensitive memory actions | consent granted |
 | `ready` | active with no active job | type, query, paste, select | input, composition start, reset/import, error |
 | `composing` | IME composition start | edit text; never show/accept Tab proposal | IME composition end -> sync |
@@ -28,7 +29,7 @@ The previous implementation effectively encoded these states as multiple mutable
 | `mutating` | reset / memory restore | block edits; wait for canonical queue; reject old responses | operation succeeds -> ready, or error |
 | `error` | network/protocol failure | reset/recover only | successful reset |
 
-The order of precedence in the UI is `error > mutating > locked > composing > syncing > degraded > dismissed > offered > learning > ready`. An offered suggestion has a tuple-bound identity: `(request generation, edit sequence, server version, mode, cursor)`; all fields must match current state when displayed and accepted.
+The order of precedence in the UI is `error > blocked > mutating > locked > composing > syncing > degraded > dismissed > offered > learning > ready`. An offered suggestion has a tuple-bound identity: `(request generation, edit sequence, server version, mode, cursor)`; all fields must match current state when displayed and accepted.
 
 ### Training phase
 
@@ -40,7 +41,8 @@ The order of precedence in the UI is `error > mutating > locked > composing > sy
 | `ready` | current snapshot promoted | can serve learned candidates |
 | `updating` | valid older snapshot plus newer append | may serve safe old knowledge; mark pending |
 | `rebuilding` | delete/replace/import invalidated previous snapshot | fail closed until matching epoch/versions arrive |
-| `failed` | process died or returned error | expose failure; do not pretend learning completed |
+| `recovering` | learning child crashed, supervisor restarting | hide candidates until latest full snapshot is trained | worker replaced -> queued / training |
+| `failed` | exception or restart budget exhausted | expose failure; do not pretend learning completed |
 
 A learning snapshot can be promoted only if its `epoch` matches the current epoch, its `request_id` is newer than the current snapshot, and it does not refer to the future. Non-append modifications increment epoch and invalidate all prior candidates. The canonical trace never coalesces; worker *requests* may coalesce because each contains complete confirmed state.
 
@@ -52,7 +54,7 @@ A learning snapshot can be promoted only if its `epoch` matches the current epoc
 4. Reset/import waits for the edit queue and invalidates old results; it must not replay model-origin or paste-origin text as typed training data.
 5. Suggestions are advisory and must not overwrite input without Tab, must not be accepted mid-IME, and must have matching client and server version.
 6. Session history cannot be silently expanded to system-wide keystrokes; local input recording requires explicit opt-in.
-7. A learning-worker failure must clear any outstanding proposal and show a degraded status while canonical editor input stays enabled. A successful learning response clears that degraded state.
+7. Unexpected learning-child death must trigger bounded asynchronous restart and replay the latest complete canonical snapshot. While restarting, hide suggestions; on repeat failure show degraded status without blocking canonical edits. A successful learning response clears the failure.
 8. Full private data, histories and personalized weights never enter the public Git repository or public CI logs.
 
 ## Priority risks from code inspection
@@ -61,7 +63,7 @@ A learning snapshot can be promoted only if its `epoch` matches the current epoc
 - The original Ghost Text has no centralized eligibility contract; implement one visible phase derivation and a single current-candidate guard.
 - Destructive reset has no confirmation, and memory import can replace existing work; make both explicit, testable user decisions.
 - Current per-event snapshot serialization includes all canonical text and an origin tuple copy; p95 latency at maximum corpus size is **not** established; keep as a measured performance risk and do not advertise zero-cost updates.
-- All HTTP tabs share one in-memory server state/token; multi-tab editing is not supported. Make this limitation explicit. Multi-tab isolation is a future architectural task, not a claim of this release.
+- Different browser pages receive distinct opaque tokens. The single canonical editor is protected by an exclusive 60-second writer lease; a second tab cannot mutate or read active memory. This is an exclusive-editor design, not independent per-tab document sessions or multi-user synchronization.
 
 ## Verification gates
 
@@ -75,3 +77,13 @@ A learning snapshot can be promoted only if its `epoch` matches the current epoc
 - Session/token scope per client tab or explicit multi-tab conflict detection.
 - Hot-path optimization: delta-based updates or persistent chunked origin snapshots; keep versioned rebuild for corrections.
 - Personalized context-switch learning (stable profile + recent topic) and prospective human adoption study before model changes.
+
+## v0.3 concurrent state-region updates (2026-11-07)
+
+**Writer FSM:** `unclaimed -> owned(tab capability) -> released|expired -> unclaimed`; `claim_writer()` executes under the same server lock as document mutation. Each page has its own random token. The UI enters `blocked` if another tab holds the writer lease; stale pages cannot obtain trace, snapshot, or submit edits. A rejected, unacknowledged local draft remains visible in a separate read-only recovery field after takeover. The server grants only one editor writer, not multiple independent document writers.
+
+**Learner FSM:** `training -> process died -> recovering -> replay latest full snapshot -> training -> ready`. The IPC dispatch thread creates/replaces the child; caller request paths do not join or relaunch it. The latest *canonical* job is replayed, and its epoch/request fence stays authoritative. At most three automatic restarts per worker; thereafter `failed`, and explicit reset is needed.
+
+**Opt-in encrypted autosave FSM:** `off -> deriving(passphrase) -> (new|decrypt saved memory) -> enabled -> delayed save -> enabled`; failures lead to `off` with a visible message. The encryption key only lives in RAM. A versioned generation cancels superseded saves, and destructive reset awaits pending writes then removes the IndexedDB record. Restoring validates the authenticated AES-GCM ciphertext before calling the existing atomically validated `/memory` endpoint. No key or passphrase is persisted. Storage is *browser-local*; recent unacknowledged edits may be lost during crash.
+
+**Proof boundaries:** HTTP single-writer tests and crash injection run on the CPU; browser WebCrypto/IndexedDB integration uses real Chromium in CI. Mobile native IME, flash secure deletion, cryptography against malicious local extensions, and real-time user savings are not certified.

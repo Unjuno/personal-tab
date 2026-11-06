@@ -115,23 +115,43 @@ def _worker_entry(connection, delay: float) -> None:
 
 
 class SnapshotWorker:
-    """One running + one newest pending job; IPC stays off the caller thread."""
+    """Bounded CPU-worker supervision with latest-full-snapshot replay.
+
+    All canonical edits live in AsyncSession; only complete model-build jobs
+    are coalesced. Unexpected process death is recovered on the IPC thread,
+    never on the foreground request thread.
+    """
+    MAX_RESTARTS = 3
+
     def __init__(self, *, delay: float = 0.) -> None:
         self._cv = threading.Condition()
         self._pending = None
+        self._latest = None
         self._result = None
         self._closed = False
         self._error = None
+        self._delay = delay
+        self._restarts = 0
+        self._recovering = False
         self._submitted = self._coalesced = self._completed = 0
         self._completed_id = self._in_flight = 0
         self._context = mp.get_context('spawn')
-        self._pipe, child = self._context.Pipe(duplex=True)
-        self._process = self._context.Process(
-            target=_worker_entry, args=(child, delay), name='personal-tab-learner', daemon=True)
-        self._process.start()
-        child.close()
+        self._start_process()
         self._thread = threading.Thread(target=self._dispatch, name='tab-snapshot-ipc', daemon=True)
         self._thread.start()
+
+    def _start_process(self) -> None:
+        self._pipe, child = self._context.Pipe(duplex=True)
+        self._process = self._context.Process(
+            target=_worker_entry, args=(child, self._delay),
+            name='personal-tab-learner', daemon=True)
+        try:
+            self._process.start()
+        except BaseException:
+            self._pipe.close()
+            child.close()
+            raise
+        child.close()
 
     @property
     def alive(self) -> bool:
@@ -139,31 +159,85 @@ class SnapshotWorker:
 
     def submit(self, job: dict[str, Any]) -> None:
         with self._cv:
-            if self._closed or self._error or not self._process.is_alive():
+            if self._closed or self._error:
                 raise RuntimeError('learning worker unavailable; reset the session')
             if self._pending is not None:
                 self._coalesced += 1
-            self._pending = job
+            self._pending = self._latest = job
             self._submitted += 1
-            self._cv.notify()
+            self._cv.notify_all()
+
+    def _retire_process(self) -> None:
+        try:
+            self._pipe.close()
+        except OSError:
+            pass
+        self._process.join(timeout=.1)
+        if self._process.is_alive():
+            self._process.terminate()
+            self._process.join(timeout=.5)
+        if self._process.is_alive():
+            self._process.kill()
+            self._process.join(timeout=.5)
+
+    def _recover(self) -> bool:
+        with self._cv:
+            if self._closed:
+                return False
+            if self._restarts >= self.MAX_RESTARTS:
+                self._error = 'learning worker repeatedly disconnected; reset the session'
+                self._in_flight = 0
+                return False
+            self._restarts += 1
+            self._recovering = True
+            self._result = None
+            self._in_flight = 0
+            if self._latest is not None and (self._pending is None or
+                                             self._pending['request_id'] < self._latest['request_id']):
+                self._pending = self._latest
+        try:
+            self._retire_process()
+            self._start_process()
+        except (OSError, EOFError, RuntimeError):
+            with self._cv:
+                self._error = 'learning worker restart failed; reset the session'
+                self._recovering = False
+            return False
+        with self._cv:
+            if self._closed:
+                return False
+            self._recovering = False
+            self._cv.notify_all()
+        return True
 
     def _dispatch(self) -> None:
         try:
             while True:
                 with self._cv:
-                    self._cv.wait_for(lambda: self._closed or self._pending is not None)
-                    if self._closed:
+                    self._cv.wait(timeout=.05)
+                    if self._closed or self._error:
                         break
                     job, self._pending = self._pending, None
-                    self._in_flight = job['request_id']
-                self._pipe.send(job)
-                while not self._pipe.poll(.05):
-                    with self._cv:
-                        if self._closed:
-                            return
-                    if not self._process.is_alive():
-                        raise EOFError('worker exited')
-                result = self._pipe.recv()
+                    self._in_flight = job['request_id'] if job else 0
+                if not self._process.is_alive():
+                    if not self._recover():
+                        break
+                    continue
+                if job is None:
+                    continue
+                try:
+                    self._pipe.send(job)
+                    while not self._pipe.poll(.05):
+                        with self._cv:
+                            if self._closed:
+                                return
+                        if not self._process.is_alive():
+                            raise EOFError('worker exited')
+                    result = self._pipe.recv()
+                except (EOFError, BrokenPipeError, OSError, ValueError):
+                    if not self._recover():
+                        break
+                    continue
                 with self._cv:
                     self._result = result
                     self._in_flight = 0
@@ -171,15 +245,11 @@ class SnapshotWorker:
                     self._completed_id = result['request_id']
                     if result.get('error'):
                         self._error = 'learning failed: ' + result['error']
-        except (EOFError, BrokenPipeError, OSError, ValueError):
-            with self._cv:
-                if not self._closed:
-                    self._error = 'learning worker disconnected; reset the session'
-                self._in_flight = 0
+                        break
         finally:
             try:
                 self._pipe.send(None)
-            except (OSError, ValueError):
+            except (OSError, ValueError, BrokenPipeError):
                 pass
 
     def poll(self) -> dict[str, Any] | None:
@@ -190,29 +260,24 @@ class SnapshotWorker:
     def stats(self) -> dict[str, Any]:
         with self._cv:
             return {'pid': self._process.pid, 'alive': self.alive,
+                    'recovering': self._recovering or not self._process.is_alive(),
+                    'restarts': self._restarts,
                     'pending_count': int(self._pending is not None),
                     'in_flight': self._in_flight, 'submitted': self._submitted,
                     'coalesced': self._coalesced, 'completed': self._completed,
                     'completed_id': self._completed_id,
-                    'error': self._error or (None if self.alive else 'worker stopped')}
+                    'error': self._error}
 
     def close(self) -> None:
         with self._cv:
             if self._closed:
                 return
             self._closed = True
-            self._pending = self._result = None
+            self._pending = self._result = self._latest = None
             self._cv.notify_all()
-        self._thread.join(timeout=.25)
-        self._process.join(timeout=.25)
-        if self._process.is_alive():
-            self._process.terminate()
-            self._process.join(timeout=1)
-        if self._process.is_alive():
-            self._process.kill()
-            self._process.join(timeout=1)
+        self._thread.join(timeout=.5)
+        self._retire_process()
         self._thread.join(timeout=1)
-        self._pipe.close()
 
 
 class AsyncSession:
@@ -347,6 +412,8 @@ class AsyncSession:
         """
         if self._error or worker_state['error']:
             return 'failed'
+        if worker_state.get('recovering'):
+            return 'recovering'
         if self.request_id == 0:
             return 'empty'
         if self.snapshot is None:
@@ -372,7 +439,7 @@ class AsyncSession:
         result = {'suggestion': '', 'version': v, 'sequence': self.sequences.get(doc_id, 0),
                   'learning_phase': phase,
                   'epoch': self.epoch, 'trained_request': self.snapshot['request_id'] if self.snapshot else 0,
-                  'learning_pending': self.snapshot is None or self.snapshot['request_id'] < self.request_id,
+                  'learning_pending': (self.snapshot is None or self.snapshot['request_id'] < self.request_id or state['recovering']),
                   'learning_error': self._error or state['error'],
                   'typed_training_chars': self.snapshot['model'].long.seen if self.snapshot else 0,
                   'unique_words': len(self.snapshot['terms'].words) if self.snapshot else 0}
@@ -384,7 +451,7 @@ class AsyncSession:
         if type(cursor) is not int or not 0 <= cursor <= len(current):
             raise ValueError('invalid cursor')
         result['cursor'] = cursor
-        if self.snapshot is not None and doc_id in self.trace.texts:
+        if self.snapshot is not None and not state['recovering'] and not result['learning_error'] and doc_id in self.trace.texts:
             context = current[:cursor]
             if mode == 'terms':
                 self.snapshot['terms'].doc = doc_id

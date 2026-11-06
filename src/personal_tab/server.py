@@ -10,16 +10,43 @@ import argparse
 import json
 import secrets
 import signal
+import time
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from personal_tab.session import Session
 
-TOKEN = secrets.token_urlsafe(32)
+CLIENTS = {}  # One unguessable capability per browser page, not one global bearer token.
+LEASE_OWNER = None
+LEASE_SEEN = 0.
+LEASE_TTL_SECONDS = 60.
+MAX_TABS = 24
 STATE = None  # Never start a learner as an import side effect (spawn safety).
 LOCK = threading.Lock()
 ROOT = Path(__file__).resolve().parent / 'web'
+
+
+def claim_writer(token):
+    # Always under LOCK. Ownership expires if the tab stops heartbeating.
+    global LEASE_OWNER, LEASE_SEEN
+    now = time.monotonic()
+    if LEASE_OWNER and now - LEASE_SEEN > LEASE_TTL_SECONDS:
+        LEASE_OWNER = None
+    if LEASE_OWNER not in (None, token):
+        return False
+    LEASE_OWNER = token
+    LEASE_SEEN = now
+    return True
+
+
+def release_writer(token):
+    global LEASE_OWNER, LEASE_SEEN
+    if LEASE_OWNER != token:
+        return False
+    LEASE_OWNER = None
+    LEASE_SEEN = 0.
+    return True
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -48,7 +75,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def authorized(self):
         token = self.headers.get('X-Tab-Token', '')
-        return self.local_request() and token.isascii() and secrets.compare_digest(token, TOKEN)
+        return self.local_request() and token.isascii() and token in CLIENTS and len(token) > 32
 
     def do_GET(self):
         if not self.local_request():
@@ -56,19 +83,35 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == '/healthz':
             self.send(200, {'status': 'ok', 'device': 'cpu', 'storage': 'memory'})
         elif self.path == '/':
-            html = (ROOT / 'live.html').read_text(encoding='utf-8').replace('__SESSION_TOKEN__', TOKEN)
+            with LOCK:
+                if len(CLIENTS) >= MAX_TABS:
+                    # Remove the oldest non-owner token. A live owner is never evicted.
+                    oldest = min((k for k in CLIENTS if k != LEASE_OWNER),
+                                 key=lambda k: CLIENTS[k], default=None)
+                    if oldest is None:
+                        self.send(429, {'error': 'too many editor tabs'}); return
+                    CLIENTS.pop(oldest, None)
+                tab_token = secrets.token_urlsafe(32)
+                CLIENTS[tab_token] = time.monotonic()
+            html = (ROOT / 'live.html').read_text(encoding='utf-8').replace('__SESSION_TOKEN__', tab_token)
             self.send(200, html, 'text/html; charset=utf-8')
         elif self.path == '/trace' and self.authorized():
             with LOCK:
+                if not claim_writer(self.headers['X-Tab-Token']):
+                    self.send(409, {'error': 'another tab owns the editor', 'code': 'editor_locked'}); return
                 payload = STATE.trace.export()
             self.send(200, payload)
         elif self.path == '/memory' and self.authorized():
             with LOCK:
+                if not claim_writer(self.headers['X-Tab-Token']):
+                    self.send(409, {'error': 'another tab owns the editor', 'code': 'editor_locked'}); return
                 payload = STATE.export_memory() if hasattr(STATE, 'export_memory') else {'error': 'requires async mode'}
             self.send(200, payload)
         elif self.path == '/status' and self.authorized():
             with LOCK:
-                payload = {'learning_mode': self.server.learning_mode, 'device': 'cpu'}
+                if not claim_writer(self.headers['X-Tab-Token']):
+                    self.send(409, {'error': 'another tab owns the editor', 'code': 'editor_locked'}); return
+                payload = {'learning_mode': self.server.learning_mode, 'device': 'cpu', 'can_edit': True}
                 if hasattr(STATE, 'worker'):
                     payload['worker'] = STATE.worker.stats()
                     payload['epoch'] = STATE.epoch
@@ -80,7 +123,7 @@ class Handler(BaseHTTPRequestHandler):
         global STATE
         if not self.authorized():
             self.send(403, {'error': 'forbidden'}); return
-        if self.path not in {'/event', '/reset', '/suggestion', '/memory'}:
+        if self.path not in {'/event', '/reset', '/suggestion', '/memory', '/lease', '/release'}:
             self.send(404, {'error': 'not found'}); return
         try:
             self.connection.settimeout(5)
@@ -91,7 +134,22 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(event, dict):
                 raise ValueError('request must be an object')
             with LOCK:
-                if self.path == '/reset':
+                token = self.headers['X-Tab-Token']
+                if self.path == '/release':
+                    if not release_writer(token):
+                        self.send(409, {'error': 'not the editor owner', 'code': 'editor_locked'}); return
+                    CLIENTS.pop(token, None)  # Revoked capability cannot reclaim the writer lease.
+                    self.send(200, {'released': True}); return
+                if not claim_writer(token):
+                    self.send(409, {'error': 'another tab owns the editor', 'code': 'editor_locked'}); return
+                if self.path == '/lease':
+                    if event.get('action') != 'claim':
+                        raise ValueError('invalid lease action')
+                    doc = 'document'
+                    result = {'active': True, 'text': STATE.trace.texts.get(doc, ''),
+                              'version': STATE.trace.versions.get(doc, 0),
+                              'sequence': STATE.sequences.get(doc, 0)}
+                elif self.path == '/reset':
                     if hasattr(STATE, 'reset'):
                         STATE.reset()
                     else:

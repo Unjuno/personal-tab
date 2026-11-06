@@ -17,7 +17,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .brand-mark{width:34px;height:34px;border-radius:10px;background:#1c3b55;display:grid;place-items:center;color:#fff;font-family:ui-monospace,monospace;font-size:19px}
 .top-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .tag{font-size:11px;letter-spacing:.04em;font-weight:700;background:#edf2f7;color:#42566a;padding:6px 9px;border-radius:6px;text-transform:uppercase}
-#phase{background:#eaf2fa;color:#244f77}body[data-interaction-phase="error"] #phase{background:#fff1ed;color:#a33d21}body[data-interaction-phase="offered"] #phase{background:#e9f6ed;color:#287447}body[data-interaction-phase="degraded"] #phase{background:#fff4e9;color:#a46116}
+#phase{background:#eaf2fa;color:#244f77}body[data-interaction-phase="blocked"] #phase{background:#fff4e9;color:#a46116}body[data-interaction-phase="error"] #phase{background:#fff1ed;color:#a33d21}body[data-interaction-phase="offered"] #phase{background:#e9f6ed;color:#287447}body[data-interaction-phase="degraded"] #phase{background:#fff4e9;color:#a46116}
 .page{max-width:1200px;margin:0 auto;padding:38px 24px 48px}
 .intro{margin-bottom:26px}.eyebrow{color:#60788e;font-weight:700;letter-spacing:.14em;text-transform:uppercase;font-size:11px;margin:0 0 8px}
 h1{margin:0;font-size:clamp(25px,3.2vw,35px);font-weight:760;letter-spacing:-.04em;line-height:1.3}h2{font-size:17px;letter-spacing:-.02em;margin:0}
@@ -52,7 +52,7 @@ kbd{display:inline-block;font-size:11px;font-weight:700;background:#f3f6fa;borde
 .action-confirm{border:1px solid #f0d0c8;background:#fff9f7;padding:13px;margin-top:12px;border-radius:9px}
 .action-confirm strong{color:#8e3e33;font-size:12px}.action-confirm p{color:#7c5750;font-size:12px;line-height:1.7;margin:6px 0 12px}.confirm-row{display:flex;gap:8px}.confirm-row .btn{padding:8px 9px}
 .card-footer{display:flex;gap:9px;align-items:center;font-size:11px;color:#8b9ba9;margin-top:16px;line-height:1.6}
-.marker{height:7px;width:7px;background:#69a282;border-radius:50%;flex:none}
+.autosave-field{display:block;width:100%;border:1px solid #cfdbe6;border-radius:8px;padding:9px 11px;font-size:13px;margin:7px 0}.autosave-state{font-size:12px;color:#63788c;line-height:1.6;margin-top:7px}.marker{height:7px;width:7px;background:#69a282;border-radius:50%;flex:none}
 @media(max-width:900px){.layout{grid-template-columns:1fr}.sidebar{display:grid;grid-template-columns:1fr 1fr}.page{padding-top:28px}}
 @media(max-width:600px){.topbar{padding:0 16px;height:auto;min-height:65px}.tag{font-size:10px;padding:5px}.page{padding:24px 12px}.editor-card,.side-card{padding:17px}.sidebar{display:flex}.editor-layer{padding:15px;font-size:15px}textarea.editor-layer{height:330px}.editor-footer{align-items:flex-start}.top-meta{gap:5px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
@@ -65,7 +65,7 @@ kbd{display:inline-block;font-size:11px;font-weight:700;background:#f3f6fa;borde
 </header>
 <main class="page">
  <section class="intro" aria-label="説明">
-  <p class="eyebrow">WRITING WORKSPACE / EXPERIMENT 0.2</p>
+  <p class="eyebrow">WRITING WORKSPACE / EXPERIMENT 0.3</p>
   <h1>書くほど、あなたの続きを覚える。</h1>
   <p class="description">確定した入力をローカルに記録し、Tab補完を少しずつ個人化します。GPU・外部モデルAPIは使いません。まだ品質検証中の実験版です。</p>
  </section>
@@ -82,14 +82,25 @@ kbd{display:inline-block;font-size:11px;font-weight:700;background:#f3f6fa;borde
     <textarea class="editor-layer" id="editor" disabled spellcheck="false" aria-label="学習対象の文章" placeholder="入力の学習を許可すると、この欄に文章を書けます。"></textarea>
    </div>
    <div class="editor-footer"><div class="hint"><kbd>Tab</kbd> 候補を採用　<kbd>Esc</kbd> 候補を隠す　<strong>IME変換中は補完しません</strong></div><output class="proposal" id="proposal" aria-live="off">—</output></div>
-   <div class="telemetry"><div id="status" role="status" aria-live="polite">記録は無効です。</div><div id="error" role="alert"></div></div>
+   <div class="telemetry"><div id="status" role="status" aria-live="polite">記録は無効です。</div><div id="error" role="alert"></div>
+    <div id="lease-warning" role="status" hidden>他のタブが編集中です。このタブは読み取り専用です。前のタブを閉じてから再取得してください。</div>
+    <button type="button" class="btn" id="claim-lease" hidden>編集権を再取得する</button>
+    <div id="draft-container" hidden><p class="small warning">編集権を失った間の未送信の文章です。内容を確認して手動でコピーしてください。自動的には混合しません。</p>
+      <textarea id="recovery-draft" class="autosave-field" rows="3" readonly aria-label="未送信の入力の控え"></textarea></div>
+   </div>
   </section>
   <aside class="sidebar" aria-label="補完と記憶の管理">
    <section class="card side-card">
     <div class="side-heading"><h2>記憶の管理</h2></div>
-    <p class="side-note">記憶は通常RAM上のみです。次回へ引き継ぐ場合はJSONを明示的に保存してください。</p>
+    <p class="side-note">入力内容はRAM上で学習します。希望する場合だけ、合言葉で暗号化してブラウザ内に自動保存できます。</p>
     <div class="stack">
-     <button type="button" class="btn btn-primary" id="save-memory">記憶をJSONで保存</button>
+     <label for="autosave-passphrase" class="small">暗号化自動保存の合言葉（12文字以上）</label>
+     <input type="password" class="autosave-field" id="autosave-passphrase" autocomplete="new-password" aria-label="暗号化自動保存の合言葉">
+     <button type="button" class="btn btn-primary" id="enable-autosave">自動保存を有効化／復元</button>
+     <button type="button" class="btn" id="remove-autosave">暗号化保存データを削除</button>
+     <div class="autosave-state" id="autosave-status" role="status">自動保存はOFFです。</div>
+     <hr class="divider">
+     <button type="button" class="btn" id="save-memory">記憶をJSONで保存（平文）</button>
      <button type="button" class="btn" id="choose-memory">記憶を読み込む</button><input type="file" id="load-memory" accept="application/json,.json" hidden>
      <button type="button" class="btn" id="export">入力トレースを書き出す</button>
     </div>
@@ -107,7 +118,7 @@ kbd{display:inline-block;font-size:11px;font-weight:700;background:#f3f6fa;borde
    <section class="card side-card">
     <div class="side-heading"><h2>使い方</h2></div>
     <p class="side-note">まず「入力の学習を許可する」にチェックを付け、文章を書いてください。「コンピュータ。コンピュータ。コンピ」と入力すると、用語の続きが出る例を試せます。</p>
-    <p class="small warning">非機密の文章だけを入力してください。保存ファイルとトレースは平文です。貼付けやモデル提案由来の文章は、本人の手入力として学習しません。</p>
+    <p class="small warning">JSON書き出しとトレースは平文です。暗号化自動保存は利用者が設定した合言葉に依存し、合言葉を忘れると復元できません。機密データでの使用は避けてください。</p>
     <div class="card-footer"><span class="marker" aria-hidden="true"></span>学習は別CPUプロセス。候補表示や保存内容の品質は未検証です。</div>
    </section>
   </aside>
@@ -115,21 +126,63 @@ kbd{display:inline-block;font-size:11px;font-weight:700;background:#f3f6fa;borde
 </main>
 <script>
 const TOKEN='__SESSION_TOKEN__', ed=document.querySelector('#editor'), consent=document.querySelector('#consent'), proposal=document.querySelector('#proposal'), status=document.querySelector('#status'), errorBox=document.querySelector('#error'), ghost=document.querySelector('#ghost'), prefix=document.querySelector('#mirror-prefix'), mirror=document.querySelector('#mirror'), mode=document.querySelector('#mode');
-const DOC='document'; // one active editor tab per server session
+const DOC='document'; // A server-enforced writer lease allows only one active editing tab
 let previous='', sequence=0, ackSequence=0, currentVersion=0, suggestion='', composing=false, origin='typed', queue=Promise.resolve(), pendingCount=0, generation=0, timer=null, pollSerial=0, resetBusy=false, failed=false, dismissed=-1, candidateIdentity=null, trainingPending=false, learningFailed=false;
+let leaseReady=false, leaseBlocked=false, unsentDraft=null;
+let autosaveKey=null, autosaveSalt=null, autosaveEnabled=false, autosaveTimer=null, autosaveGeneration=0, autosaveQueue=Promise.resolve();
 Object.defineProperty(window,'__testState',{get:()=>({idle:pendingCount===0&&!resetBusy,sequence,ackSequence,composing,phase:interactionPhase(),version:currentVersion})});
-async function post(path,data){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Tab-Token':TOKEN},body:JSON.stringify(data)});const out=await r.json();if(!r.ok)throw Error(out.error||r.status);return out;}
+async function post(path,data){
+ const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Tab-Token':TOKEN},body:JSON.stringify(data)});
+ const out=await r.json();if(!r.ok){const e=new Error(out.error||String(r.status));e.code=out.code;e.status=r.status;throw e;}return out;
+}
+function blockByOtherTab(){
+ if(pendingCount>0||ackSequence!==sequence)unsentDraft=ed.value;
+ leaseReady=false;leaseBlocked=true;generation++;cancelPoll();clear();
+ consent.checked=false;consent.disabled=true;ed.disabled=true;
+ document.querySelector('#lease-warning').hidden=false;
+ document.querySelector('#claim-lease').hidden=false;
+ errorBox.textContent='';refreshPhase();
+}
+async function claimLease(){
+ try{
+  const out=await post('/lease',{action:'claim'});
+  leaseReady=true;leaseBlocked=false;
+  document.querySelector('#lease-warning').hidden=true;
+  document.querySelector('#claim-lease').hidden=true;
+  consent.disabled=false;
+  if(unsentDraft&&unsentDraft!==out.text){
+   document.querySelector('#recovery-draft').value=unsentDraft;
+   document.querySelector('#draft-container').hidden=false;
+  }
+  if(pendingCount===0){
+   ed.value=previous=out.text||'';sequence=ackSequence=out.sequence||0;currentVersion=out.version||0;
+  }
+  ed.disabled=!consent.checked||failed;
+  paint();
+  return true;
+ }catch(e){if(e.code==='editor_locked'){blockByOtherTab();return false;}fail(e);return false;}
+}
+document.querySelector('#claim-lease').onclick=claimLease;
+setInterval(async()=>{
+ if(!leaseReady||failed)return;
+ try{const r=await fetch('/status',{headers:{'X-Tab-Token':TOKEN}});if(r.status===409||r.status===403)blockByOtherTab();}
+ catch(e){/* Network errors do not change canonical text; next edit will retry. */}
+},20000);
+addEventListener('pagehide',()=>{
+ if(leaseReady)fetch('/release',{method:'POST',headers:{'Content-Type':'application/json','X-Tab-Token':TOKEN},body:'{}',keepalive:true}).catch(()=>{});
+});
 function atEnd(){return ed.selectionStart===ed.selectionEnd&&ed.selectionEnd===ed.value.length;}
 // A proposal is bound to a concrete UI and canonical-document generation.
 function candidateIsCurrent(){
  return Boolean(suggestion&&candidateIdentity&&!failed&&!learningFailed&&!resetBusy&&!composing&&consent.checked&&atEnd()&&
-   candidateIdentity.generation===generation&&candidateIdentity.sequence===sequence&&pendingCount===0&&ackSequence===sequence&&
+   leaseReady&&!leaseBlocked&&candidateIdentity.generation===generation&&candidateIdentity.sequence===sequence&&pendingCount===0&&ackSequence===sequence&&
    candidateIdentity.version===currentVersion&&candidateIdentity.mode===mode.value&&
    candidateIdentity.cursor===[...ed.value].length&&dismissed!==sequence);
 }
 // Explicit precedence: fatal error > mutation > consent > IME > unacked edit > degraded > dismissal > offered > learning > ready.
 function interactionPhase(){
  if(failed)return 'error';
+ if(leaseBlocked||!leaseReady)return 'blocked';
  if(resetBusy)return 'mutating';
  if(!consent.checked)return 'locked';
  if(composing)return 'composing';
@@ -141,7 +194,7 @@ function interactionPhase(){
  return 'ready';
 }
 function refreshPhase(){
- const labels={error:'停止中',mutating:'記憶を更新中',locked:'記録OFF',composing:'日本語変換中',syncing:'入力を同期中',dismissed:'候補を非表示',offered:'Tabで補完',learning:'学習中',degraded:'学習エラー（入力可能）',ready:'入力できます'};
+ const labels={blocked:'編集権を確認中',error:'停止中',mutating:'記憶を更新中',locked:'記録OFF',composing:'日本語変換中',syncing:'入力を同期中',dismissed:'候補を非表示',offered:'Tabで補完',learning:'学習中',degraded:'学習エラー（入力可能）',ready:'入力できます'};
  const state=interactionPhase();document.body.dataset.interactionPhase=state;
  const label=document.querySelector('#phase');if(label)label.textContent=labels[state];
 }
@@ -155,7 +208,7 @@ function paint(){
 }
 function cancelPoll(){clearTimeout(timer);timer=null;pollSerial++;}
 function clear(){suggestion='';candidateIdentity=null;paint();}
-function fail(e){failed=true;cancelPoll();clear();consent.checked=false;ed.disabled=true;errorBox.textContent='処理を停止しました：'+e.message+'。リセットして再開してください。';refreshPhase();}
+function fail(e){if(e.code==='editor_locked'){blockByOtherTab();return;}failed=true;cancelPoll();clear();consent.checked=false;ed.disabled=true;errorBox.textContent='処理を停止しました：'+e.message+'。リセットして再開してください。';refreshPhase();}
 function render(out){
  if(out.learning_error){learningFailed=true;trainingPending=false;errorBox.textContent=out.learning_error;clear();return;}
  learningFailed=false;trainingPending=Boolean(out.learning_pending);errorBox.textContent='';
@@ -178,7 +231,7 @@ function pollSuggestions(gen,seq,serial,attempt=0){
  }catch(e){if(gen===generation&&seq===sequence)fail(e);}},40);
 }
 function capture(){
- if(!consent.checked||composing||resetBusy||failed)return;
+ if(!consent.checked||!leaseReady||leaseBlocked||composing||resetBusy||failed)return;
  const value=ed.value;if(value===previous){origin='typed';return;}
  const old=[...previous],fresh=[...value];let a=0,b=0;
  while(a<old.length&&a<fresh.length&&old[a]===fresh[a])a++;
@@ -188,11 +241,11 @@ function capture(){
  origin='typed';previous=value;dismissed=-1;cancelPoll();clear();
  const gen=generation;pendingCount++;refreshPhase();
  queue=queue.then(async()=>{if(failed)return;const out=await post('/event',ev);
-  if(ev.sequence>ackSequence){ackSequence=ev.sequence;currentVersion=out.version;}
+  if(ev.sequence>ackSequence){ackSequence=ev.sequence;currentVersion=out.version;scheduleAutosave();}
   if(gen===generation&&ev.sequence===sequence&&consent.checked&&!composing){if(ev.mode===mode.value)render(out);if(out.learning_pending||ev.mode!==mode.value)pollSuggestions(gen,sequence,pollSerial);}
  }).catch(e=>{if(gen===generation)fail(e);}).finally(()=>{pendingCount--;paint();});
 }
-consent.onchange=()=>{ed.disabled=!consent.checked||failed;generation++;cancelPoll();clear();status.textContent=consent.checked?'この入力欄だけを記録中。':'以後の記録を停止しました。記憶の消去はリセット。';if(consent.checked&&!failed){ed.focus();const gen=generation;queue.then(()=>{if(gen===generation&&consent.checked&&!failed&&!composing&&ackSequence===sequence){cancelPoll();pollSuggestions(gen,sequence,pollSerial);}});}refreshPhase();};
+consent.onchange=()=>{if(!leaseReady||leaseBlocked){consent.checked=false;ed.disabled=true;return;}ed.disabled=!consent.checked||failed;generation++;cancelPoll();clear();status.textContent=consent.checked?'この入力欄だけを記録中。':'以後の記録を停止しました。記憶の消去はリセット。';if(consent.checked&&!failed){ed.focus();const gen=generation;queue.then(()=>{if(gen===generation&&consent.checked&&!failed&&!composing&&ackSequence===sequence){cancelPoll();pollSuggestions(gen,sequence,pollSerial);}});}refreshPhase();};
 ed.addEventListener('compositionstart',()=>{composing=true;cancelPoll();clear();});
 ed.addEventListener('compositionend',()=>{composing=false;paint();setTimeout(()=>{const unchanged=ed.value===previous;capture();if(unchanged&&ackSequence===sequence&&!failed&&consent.checked&&dismissed!==sequence){cancelPoll();pollSuggestions(generation,sequence,pollSerial);}},0);});
 ed.addEventListener('paste',()=>{origin='paste';});
@@ -225,6 +278,7 @@ document.querySelector('#confirm-reset').onclick=async()=>{
  try{
   await queue;await post('/reset',{});
   ed.value='';previous='';sequence=ackSequence=currentVersion=0;dismissed=-1;failed=false;trainingPending=false;learningFailed=false;errorBox.textContent='';
+  await discardAutosave();
   clear();status.textContent='記憶を消しました。';
  }catch(e){fail(e);}
  finally{resetBusy=false;ed.disabled=!consent.checked||failed;if(!ed.disabled)ed.focus();paint();}
@@ -255,12 +309,102 @@ document.querySelector('#confirm-import').onclick=async()=>{
   const memory=JSON.parse(await file.text());
   const out=await post('/memory',{allowed:true,memory});
   ed.value=previous=out.text;sequence=ackSequence=0;currentVersion=out.version;
-  failed=false;dismissed=-1;trainingPending=true;learningFailed=false;errorBox.textContent='';clear();status.textContent='記憶を再構築中。';
+  failed=false;dismissed=-1;trainingPending=true;learningFailed=false;errorBox.textContent='';clear();status.textContent='記憶を再構築中。';scheduleAutosave();
  }catch(e){errorBox.textContent='読み込みを中止しました：'+e.message;}
  finally{
   resetBusy=false;ed.disabled=!consent.checked||failed;
   if(!ed.disabled){ed.focus();ed.setSelectionRange(ed.value.length,ed.value.length);pollSuggestions(generation,sequence,pollSerial);}
   paint();
  }
-};paint();
+};
+
+// Explicitly opt-in encrypted browser-local recovery. Neither passphrase nor key is persisted.
+const AUTO_DB='personal-tab-encrypted-v1',AUTO_STORE='snapshots',AUTO_ID='document';
+function openBackupDB(){return new Promise((resolve,reject)=>{
+ if(!globalThis.indexedDB){reject(new Error('このブラウザでは暗号化保存が利用できません'));return;}
+ const req=indexedDB.open(AUTO_DB,1);
+ req.onupgradeneeded=()=>{if(!req.result.objectStoreNames.contains(AUTO_STORE))req.result.createObjectStore(AUTO_STORE);};
+ req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);
+});}
+async function backupOp(operation, value){
+ const db=await openBackupDB();
+ try{return await new Promise((resolve,reject)=>{
+  const tx=db.transaction(AUTO_STORE,operation==='get'?'readonly':'readwrite');
+  const store=tx.objectStore(AUTO_STORE);
+  const req=operation==='get'?store.get(AUTO_ID):operation==='delete'?store.delete(AUTO_ID):store.put(value,AUTO_ID);
+  let response;req.onsuccess=()=>{response=req.result;};
+  tx.oncomplete=()=>resolve(response);tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);
+ });}finally{db.close();}
+}
+async function deriveBackupKey(passphrase,salt){
+ const base=await crypto.subtle.importKey('raw',new TextEncoder().encode(passphrase),'PBKDF2',false,['deriveKey']);
+ return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:310000,hash:'SHA-256'},base,
+                                {name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+}
+async function sealBackup(memory,key,salt){
+ const iv=crypto.getRandomValues(new Uint8Array(12));
+ const data=new TextEncoder().encode(JSON.stringify(memory));
+ const ciphertext=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv,
+  additionalData:new TextEncoder().encode(AUTO_DB)},key,data));
+ return {schema:AUTO_DB,salt,iv,ciphertext,updatedAt:Date.now()};
+}
+async function openSealedBackup(record,key){
+ if(record.schema!==AUTO_DB)throw Error('保存データ形式が不正です');
+ const data=await crypto.subtle.decrypt({name:'AES-GCM',iv:record.iv,
+  additionalData:new TextEncoder().encode(AUTO_DB)},key,record.ciphertext);
+ return JSON.parse(new TextDecoder().decode(data));
+}
+function autosaveStatus(message){document.querySelector('#autosave-status').textContent=message;}
+function scheduleAutosave(){
+ if(!autosaveEnabled||!autosaveKey||!leaseReady)return;
+ clearTimeout(autosaveTimer);const gen=++autosaveGeneration;
+ autosaveTimer=setTimeout(()=>{
+  autosaveQueue=autosaveQueue.then(async()=>{
+   await queue;
+   if(!autosaveEnabled||gen!==autosaveGeneration||resetBusy)return;
+   const r=await fetch('/memory',{headers:{'X-Tab-Token':TOKEN}});
+   if(!r.ok)throw Error('学習データの取得に失敗しました');
+   const record=await sealBackup(await r.json(),autosaveKey,autosaveSalt);
+   if(!autosaveEnabled||gen!==autosaveGeneration||resetBusy)return;
+   await backupOp('put',record);
+   autosaveStatus('暗号化して保存済み。'+new Date(record.updatedAt).toLocaleTimeString());
+  }).catch(e=>{autosaveEnabled=false;autosaveKey=null;autosaveSalt=null;autosaveStatus('自動保存を停止：'+e.message);});
+ },450);
+}
+async function discardAutosave(){
+ clearTimeout(autosaveTimer);autosaveGeneration++;
+ await autosaveQueue;await backupOp('delete');
+ autosaveStatus(autosaveEnabled?'以前の記憶を削除しました。新しい入力から自動保存します。':'暗号化保存を削除しました。');
+}
+document.querySelector('#enable-autosave').onclick=async()=>{
+ const input=document.querySelector('#autosave-passphrase');const pass=input.value;input.value='';
+ if(!consent.checked||!leaseReady||leaseBlocked){autosaveStatus('編集権と学習許可が必要です。');return;}
+ if(pass.length<12){autosaveStatus('合言葉は12文字以上にしてください。');return;}
+ if(autosaveEnabled){autosaveStatus('すでに暗号化自動保存中です。');return;}
+ try{
+  const record=await backupOp('get');
+  const salt=record?record.salt:crypto.getRandomValues(new Uint8Array(16));
+  const key=await deriveBackupKey(pass,salt);
+  if(record){
+   const memory=await openSealedBackup(record,key); // Authenticate before any mutation.
+   if(ed.value){autosaveStatus('復元前に編集中の文章を手動で保存・消去してください。');return;}
+   resetBusy=true;generation++;cancelPoll();clear();ed.disabled=true;
+   try{await queue;const out=await post('/memory',{allowed:true,memory});
+    ed.value=previous=out.text;sequence=ackSequence=0;currentVersion=out.version;
+   }finally{resetBusy=false;ed.disabled=!consent.checked||failed;}
+  }
+  autosaveKey=key;autosaveSalt=salt;autosaveEnabled=true;
+  autosaveStatus(record?'暗号化記憶を復元しました。自動保存中。':'暗号化自動保存を開始しました。');
+  scheduleAutosave();paint();
+ }catch(e){autosaveStatus('有効化・復元に失敗しました。合言葉または保存データを確認してください。');}
+};
+document.querySelector('#remove-autosave').onclick=async()=>{
+ if(!window.confirm('このブラウザに暗号化保存した記憶を削除します。よろしいですか？'))return;
+ autosaveEnabled=false;autosaveKey=null;autosaveSalt=null;
+ try{await discardAutosave();}catch(e){autosaveStatus('削除に失敗しました：'+e.message);}
+};
+backupOp('get').then(r=>{if(r&&!autosaveEnabled)autosaveStatus('暗号化保存があります。合言葉を入力して復元できます。');}).catch(()=>{
+ autosaveStatus('この環境では暗号化自動保存が利用できません。');
+});
+claimLease();paint();
 </script></body></html>

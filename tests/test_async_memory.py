@@ -129,13 +129,16 @@ def test_invalid_events_do_not_mutate_state():
             assert s.trace.texts=={} and s.sequences=={}
         assert not s.worker.stats()['submitted']
 
-def test_worker_failure_is_visible_not_silent():
+def test_worker_failure_recovers_without_losing_canonical_text():
     with AsyncSession() as s:
         s.apply(event());settled(s)
-        s.worker._process.terminate(); s.worker._process.join(timeout=2)
-        wait_until(lambda:not s.worker.alive)
-        r=s.apply(event(2,'。',start=len(TEXT),end=len(TEXT)))
-        assert r['learning_error']
+        old_pid=s.worker.stats()['pid']
+        s.worker._process.terminate();s.worker._process.join(timeout=2)
+        s.apply(event(2,'。',start=len(TEXT),end=len(TEXT)))
+        result=settled(s)
+        assert result['learning_error'] is None
+        assert result['learning_phase']=='ready'
+        assert s.worker.stats()['pid']!=old_pid
         assert s.trace.texts['d']==TEXT+'。'
 
 
@@ -208,4 +211,56 @@ def test_explicit_learning_phase_is_coherent_across_delayed_training_and_rebuild
         assert settled(s)['learning_phase']=='ready'
         s.worker._process.terminate()
         s.worker._process.join(timeout=2)
-        assert s.suggest(doc_id='d')['learning_phase']=='failed'
+        assert s.suggest(doc_id='d')['learning_phase'] in {'recovering','updating','queued','ready'}
+        wait_until(lambda:s.worker.stats()['restarts']>=1)
+        assert settled(s)['learning_phase']=='ready'
+
+
+def test_worker_crash_restarts_and_replays_full_latest_snapshot():
+    with AsyncSession() as session:
+        assert session.apply(event())['recorded']
+        settled(session)
+        old_pid = session.worker.stats()['pid']
+        # Actual process crash, not a mock exception.
+        session.worker._process.kill()
+        session.worker._process.join(timeout=2)
+        # Foreground input remains accepted and the latest canonical text is replayed.
+        session.apply(dict(event(seq=2, text='。コンピ'), kind='insert', start=len(TEXT), end=len(TEXT)))
+        result = wait_until(lambda: (r if not (r := session.suggest(doc_id='d'))['learning_pending'] else None),
+                            timeout=7)
+        assert not result['learning_error']
+        assert session.worker.stats()['pid'] != old_pid
+        assert session.worker.stats()['restarts'] >= 1
+        assert result['typed_training_chars'] == len(TEXT + '。コンピ')
+
+
+def test_worker_restart_budget_is_bounded_and_reports_terminal_error():
+    with AsyncSession() as s:
+        s.worker.MAX_RESTARTS=1
+        s.apply(event());settled(s)
+        for _ in range(2):
+            s.worker._process.kill()
+            s.worker._process.join(timeout=2)
+            if _==0:
+                wait_until(lambda:s.worker.stats()['restarts']==1 and s.worker.alive)
+                settled(s)
+        wait_until(lambda:s.worker.stats()['error'] is not None)
+        r=s.suggest(doc_id='d')
+        assert r['learning_phase']=='failed'
+        assert r['learning_error']
+        assert s.trace.texts['d']==TEXT
+
+
+def test_crash_before_reset_cannot_restore_old_training_material():
+    with AsyncSession(worker_delay=.12) as s:
+        s.apply(event())
+        settled(s)
+        s.worker._process.kill()
+        s.worker._process.join(timeout=2)
+        s.reset()
+        s.apply(event(text='コンピ'))
+        wait_until(lambda: not s.suggest(doc_id='d')['learning_pending'], timeout=8)
+        r=s.suggest(doc_id='d')
+        assert r['typed_training_chars']==len('コンピ')
+        assert r['suggestion']==''
+        assert 'コンピュータ' not in str(s.trace.export())
