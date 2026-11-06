@@ -1,39 +1,177 @@
 <!doctype html>
-<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Personal Tab — CPU local experiment</title>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Personal Tab — Local writing assistant</title>
 <style>
-:root{font-family:system-ui,sans-serif;color:#1e293b;background:#f4f6f9}body{max-width:900px;margin:40px auto;padding:0 24px}h1{font-size:29px;margin-bottom:8px}.small{color:#526375;font-size:13px;line-height:1.8}.card{background:white;border:1px solid #dbe2ea;border-radius:12px;padding:24px;margin:20px 0}.editor-shell{position:relative;margin-top:16px}.editor-layer{box-sizing:border-box;width:100%;border:1px solid #aebccb;border-radius:8px;padding:16px;font:17px/1.9 ui-monospace,monospace;letter-spacing:normal;tab-size:4;white-space:pre-wrap;overflow-wrap:break-word;word-break:normal}textarea.editor-layer{position:relative;display:block;height:300px;background:transparent;resize:vertical;color:#1e293b;z-index:2}.mirror{position:absolute;top:0;left:0;overflow:hidden;pointer-events:none;z-index:1;color:transparent;border-color:transparent}#ghost{color:#8291a3}textarea:disabled{opacity:.6}button,select{font:inherit;padding:7px 13px;border:1px solid #b4c1ce;border-radius:6px;background:white;margin-right:8px}.proposal{min-height:30px;font:17px/1.8 ui-monospace,monospace;color:#60748a}.bar{display:flex;gap:12px;flex-wrap:wrap;align-items:center}label{line-height:1.8}.warning,#error{color:#a3410b}.tag{font:12px system-ui;background:#eaf0f5;padding:4px 8px;border-radius:5px}kbd{font:inherit;background:#edf1f6;padding:1px 6px;border-radius:3px}
-</style></head><body>
-<div class="bar"><span class="tag">CPU ONLY</span><span class="tag">LOCAL · EXPERIMENTAL v0.2</span></div>
-<h1>書いた表現を、次のTabへ。</h1>
-<p class="small">入力記録と補完は手元のプロセス、学習は別のCPUプロセスで行います。外部のモデルAPIには送信しません。</p>
-<div class="card">
-<div class="bar"><label><input type="checkbox" id="consent">このエディタの入力記録・学習を有効にする</label><select id="mode" aria-label="補完方式"><option value="terms">用語メモリ</option><option value="statistical">統計予測（実験用）</option></select></div>
-<p class="small">最初の記憶は空です。「コンピュータ。コンピュータ。」を手入力し、続けて「コンピ」と入力すると、既に書いた用語の続きを提案します。</p>
-<div class="editor-shell"><div class="editor-layer mirror" id="mirror" aria-hidden="true"><span id="mirror-prefix"></span><span id="ghost"></span></div><textarea class="editor-layer" id="editor" disabled spellcheck="false" aria-label="学習対象の文章"></textarea></div>
-<p class="small"><kbd>Tab</kbd> 採用 ／ <kbd>Esc</kbd> 非表示。現在は文末だけを補完します。IME変換中は表示・Tab採用を抑制します。</p>
-<div class="proposal" id="proposal" aria-live="polite">—</div><div class="small" id="status">記録は無効です。</div><div id="error" class="small" role="alert"></div>
-</div>
-<div class="bar"><button id="save-memory">記憶を保存</button><label><button type="button" id="choose-memory">記憶を読み込んで置換</button><input type="file" id="load-memory" accept="application/json,.json" hidden></label><button id="export">入力トレースを書き出す</button><button id="reset">このセッションの記憶を消す</button></div>
-<p class="small warning">非機密の文章だけで試してください。通常はRAM内のみで、停止すると消えます。「記憶を保存」で次回へ引き継げます。保存JSON・トレースは平文です。貼付け・モデル採用は由来を区別し、無条件には学習しません。</p>
-<p class="small">学習中も入力できます。反映には遅れがあり、弱い候補は表示しません。削除・置換の直後は古い記憶を失効させ、再構築まで補完を控えます。実用的な補完品質・時短は未達／未検証です。</p>
+:root{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;color:#1d2c3c;background:#f6f8fb;font-synthesis:none}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{margin:0;min-height:100vh}
+button,input,select,textarea{font:inherit}
+button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.58}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #97bcef;outline-offset:2px}
+.topbar{background:#fff;border-bottom:1px solid #e1e7ef;padding:0 max(24px,calc((100vw - 1200px)/2));height:66px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.brand{display:flex;align-items:center;gap:12px;font-size:17px;font-weight:750;letter-spacing:-.03em}
+.brand-mark{width:34px;height:34px;border-radius:10px;background:#1c3b55;display:grid;place-items:center;color:#fff;font-family:ui-monospace,monospace;font-size:19px}
+.top-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.tag{font-size:11px;letter-spacing:.04em;font-weight:700;background:#edf2f7;color:#42566a;padding:6px 9px;border-radius:6px;text-transform:uppercase}
+#phase{background:#eaf2fa;color:#244f77}body[data-interaction-phase="error"] #phase{background:#fff1ed;color:#a33d21}body[data-interaction-phase="offered"] #phase{background:#e9f6ed;color:#287447}
+.page{max-width:1200px;margin:0 auto;padding:38px 24px 48px}
+.intro{margin-bottom:26px}.eyebrow{color:#60788e;font-weight:700;letter-spacing:.14em;text-transform:uppercase;font-size:11px;margin:0 0 8px}
+h1{margin:0;font-size:clamp(25px,3.2vw,35px);font-weight:760;letter-spacing:-.04em;line-height:1.3}h2{font-size:17px;letter-spacing:-.02em;margin:0}
+.description{font-size:14px;color:#64788c;line-height:1.85;margin:9px 0 0;max-width:800px}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:20px;align-items:start}
+.card{background:#fff;border:1px solid #e0e7ef;border-radius:14px;box-shadow:0 5px 30px rgba(16,36,57,.035)}
+.editor-card{padding:22px 22px 18px}.panel-header{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:16px}
+.panel-title{font-weight:750;font-size:14px}.panel-subtitle{font-size:12px;color:#6c8092;margin:3px 0 0}
+.setting-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.consent-control{display:inline-flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;font-weight:630;color:#334a60}
+.consent-control input{width:17px;height:17px;accent-color:#356d9b}
+select{background:#fff;border:1px solid #cfdbe6;border-radius:8px;padding:8px 30px 8px 10px;color:#25425d;font-size:13px}
+.editor-shell{position:relative;overflow:hidden;border-radius:10px;margin-top:8px;background:#fff}
+.editor-layer{box-sizing:border-box;width:100%;border:1px solid #cbd6e1;border-radius:10px;padding:24px;font:17px/1.95 ui-monospace,"SFMono-Regular",Consolas,"Noto Sans Mono CJK JP",monospace;letter-spacing:normal;tab-size:4;white-space:pre-wrap;overflow-wrap:break-word;word-break:normal}
+textarea.editor-layer{position:relative;display:block;height:400px;min-height:250px;background:transparent;resize:vertical;color:#1d2c3c;z-index:2;caret-color:#1c5e91}
+textarea.editor-layer:disabled{background:#f7f9fb;color:#8896a5}
+.mirror{position:absolute;top:0;left:0;overflow:hidden;pointer-events:none;z-index:1;color:transparent;border-color:transparent}
+#ghost{color:#8396a9}body[data-interaction-phase="offered"] .editor-shell{box-shadow:0 0 0 1px rgba(63,116,160,.2)}
+.editor-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:14px}
+.hint{font-size:12px;color:#63788c;line-height:1.6}.hint strong{color:#324d66}
+kbd{display:inline-block;font-size:11px;font-weight:700;background:#f3f6fa;border:1px solid #d5e1ea;box-shadow:0 1px 0 #c9d4df;border-radius:5px;padding:2px 6px;margin-right:3px;color:#39536a}
+.proposal{min-height:27px;display:flex;align-items:center;font:13px/1.5 ui-monospace,Consolas,monospace;color:#52728c;background:#f4f8fb;padding:4px 10px;border-radius:6px;max-width:100%;overflow-wrap:anywhere}
+.telemetry{border-top:1px solid #edf0f4;margin-top:18px;padding-top:14px}
+#status{color:#5e758a;font-size:12px;line-height:1.6}
+#error{color:#aa3b29;font-size:12px;font-weight:600;margin-top:8px;line-height:1.6}
+.sidebar{display:flex;flex-direction:column;gap:16px}.side-card{padding:22px}
+.side-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.side-note{font-size:12px;line-height:1.75;color:#718497;margin:0 0 16px}
+.stack{display:flex;flex-direction:column;gap:9px}.btn{display:flex;justify-content:center;align-items:center;gap:8px;width:100%;border-radius:8px;padding:10px 12px;background:#fff;border:1px solid #cfdbe6;color:#2c485f;font-size:13px;font-weight:650;transition:background .15s}
+.btn:hover{background:#f4f8fb}.btn-primary{background:#285c82;color:#fff;border-color:#285c82}.btn-primary:hover{background:#214e6e}.btn-danger{color:#9e3c32;border-color:#e5c3bc}.btn-danger:hover{background:#fff7f5}.btn-soft{background:#edf4fa;border-color:#d5e5f3}
+.divider{border:0;border-top:1px solid #e9eef3;margin:15px 0}.small{color:#64788c;font-size:12px;line-height:1.7}.warning{color:#9a5a29}
+.action-confirm{border:1px solid #f0d0c8;background:#fff9f7;padding:13px;margin-top:12px;border-radius:9px}
+.action-confirm strong{color:#8e3e33;font-size:12px}.action-confirm p{color:#7c5750;font-size:12px;line-height:1.7;margin:6px 0 12px}.confirm-row{display:flex;gap:8px}.confirm-row .btn{padding:8px 9px}
+.card-footer{display:flex;gap:9px;align-items:center;font-size:11px;color:#8b9ba9;margin-top:16px;line-height:1.6}
+.marker{height:7px;width:7px;background:#69a282;border-radius:50%;flex:none}
+@media(max-width:900px){.layout{grid-template-columns:1fr}.sidebar{display:grid;grid-template-columns:1fr 1fr}.page{padding-top:28px}}
+@media(max-width:600px){.topbar{padding:0 16px;height:auto;min-height:65px}.tag{font-size:10px;padding:5px}.page{padding:24px 12px}.editor-card,.side-card{padding:17px}.sidebar{display:flex}.editor-layer{padding:15px;font-size:15px}textarea.editor-layer{height:330px}.editor-footer{align-items:flex-start}.top-meta{gap:5px}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header class="topbar">
+ <div class="brand"><div class="brand-mark" aria-hidden="true">↳</div><span>Personal Tab</span></div>
+ <div class="top-meta"><span class="tag">Local first</span><span class="tag">CPU only</span><output id="phase" class="tag" aria-live="polite">記録OFF</output></div>
+</header>
+<main class="page">
+ <section class="intro" aria-label="説明">
+  <p class="eyebrow">WRITING WORKSPACE / EXPERIMENT 0.2</p>
+  <h1>書くほど、あなたの続きを覚える。</h1>
+  <p class="description">確定した入力をローカルに記録し、Tab補完を少しずつ個人化します。GPU・外部モデルAPIは使いません。まだ品質検証中の実験版です。</p>
+ </section>
+ <div class="layout">
+  <section class="card editor-card" aria-label="文章エディタ">
+   <div class="panel-header">
+    <div><div class="panel-title">文章エディタ</div><p class="panel-subtitle">文末のみ補完。入力の途中で候補を採用できます。</p></div>
+    <div class="setting-row"><label class="consent-control" for="consent"><input type="checkbox" id="consent"> 入力の学習を許可する</label>
+      <select id="mode" aria-label="補完方式"><option value="terms">用語補完</option><option value="statistical">統計予測（実験用）</option></select>
+    </div>
+   </div>
+   <div class="editor-shell">
+    <div class="editor-layer mirror" id="mirror" aria-hidden="true"><span id="mirror-prefix"></span><span id="ghost"></span></div>
+    <textarea class="editor-layer" id="editor" disabled spellcheck="false" aria-label="学習対象の文章" placeholder="入力の学習を許可すると、この欄に文章を書けます。"></textarea>
+   </div>
+   <div class="editor-footer"><div class="hint"><kbd>Tab</kbd> 候補を採用　<kbd>Esc</kbd> 候補を隠す　<strong>IME変換中は補完しません</strong></div><output class="proposal" id="proposal" aria-live="off">—</output></div>
+   <div class="telemetry"><div id="status" role="status" aria-live="polite">記録は無効です。</div><div id="error" role="alert"></div></div>
+  </section>
+  <aside class="sidebar" aria-label="補完と記憶の管理">
+   <section class="card side-card">
+    <div class="side-heading"><h2>記憶の管理</h2></div>
+    <p class="side-note">記憶は通常RAM上のみです。次回へ引き継ぐ場合はJSONを明示的に保存してください。</p>
+    <div class="stack">
+     <button type="button" class="btn btn-primary" id="save-memory">記憶をJSONで保存</button>
+     <button type="button" class="btn" id="choose-memory">記憶を読み込む</button><input type="file" id="load-memory" accept="application/json,.json" hidden>
+     <button type="button" class="btn" id="export">入力トレースを書き出す</button>
+    </div>
+    <div id="import-confirm" class="action-confirm" role="group" aria-label="記憶の置換確認" hidden>
+      <strong>現在の記憶を置き換えますか？</strong><p id="import-name">読み込みは元に戻せません。先に保存してください。</p>
+      <div class="confirm-row"><button type="button" class="btn" id="cancel-import">キャンセル</button><button type="button" class="btn btn-danger" id="confirm-import">置き換える</button></div>
+    </div>
+    <hr class="divider">
+    <button type="button" class="btn btn-danger" id="reset">このセッションの記憶を消す</button>
+    <div id="reset-confirm" class="action-confirm" role="group" aria-label="記憶の削除確認" hidden>
+      <strong>記憶と編集中の文章を消去します</strong><p>この操作は取り消せません。必要なら先にJSONを保存してください。</p>
+      <div class="confirm-row"><button type="button" class="btn" id="cancel-reset">キャンセル</button><button type="button" class="btn btn-danger" id="confirm-reset">消去する</button></div>
+    </div>
+   </section>
+   <section class="card side-card">
+    <div class="side-heading"><h2>使い方</h2></div>
+    <p class="side-note">まず「入力の学習を許可する」にチェックを付け、文章を書いてください。「コンピュータ。コンピュータ。コンピ」と入力すると、用語の続きが出る例を試せます。</p>
+    <p class="small warning">非機密の文章だけを入力してください。保存ファイルとトレースは平文です。貼付けやモデル提案由来の文章は、本人の手入力として学習しません。</p>
+    <div class="card-footer"><span class="marker" aria-hidden="true"></span>学習は別CPUプロセス。候補表示や保存内容の品質は未検証です。</div>
+   </section>
+  </aside>
+ </div>
+</main>
 <script>
 const TOKEN='__SESSION_TOKEN__', ed=document.querySelector('#editor'), consent=document.querySelector('#consent'), proposal=document.querySelector('#proposal'), status=document.querySelector('#status'), errorBox=document.querySelector('#error'), ghost=document.querySelector('#ghost'), prefix=document.querySelector('#mirror-prefix'), mirror=document.querySelector('#mirror'), mode=document.querySelector('#mode');
 const DOC='document'; // one active editor tab per server session
-let previous='', sequence=0, ackSequence=0, currentVersion=0, suggestion='', composing=false, origin='typed', queue=Promise.resolve(), pendingCount=0, generation=0, timer=null, pollSerial=0, resetBusy=false, failed=false, dismissed=-1;
-Object.defineProperty(window,'__testState',{get:()=>({idle:pendingCount===0&&!resetBusy,sequence,ackSequence,composing})});
+let previous='', sequence=0, ackSequence=0, currentVersion=0, suggestion='', composing=false, origin='typed', queue=Promise.resolve(), pendingCount=0, generation=0, timer=null, pollSerial=0, resetBusy=false, failed=false, dismissed=-1, candidateIdentity=null, trainingPending=false;
+Object.defineProperty(window,'__testState',{get:()=>({idle:pendingCount===0&&!resetBusy,sequence,ackSequence,composing,phase:interactionPhase(),version:currentVersion})});
 async function post(path,data){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Tab-Token':TOKEN},body:JSON.stringify(data)});const out=await r.json();if(!r.ok)throw Error(out.error||r.status);return out;}
 function atEnd(){return ed.selectionStart===ed.selectionEnd&&ed.selectionEnd===ed.value.length;}
-function paint(){prefix.textContent=ed.value;ghost.textContent=(!composing&&consent.checked&&atEnd())?suggestion:'';mirror.style.width=(ed.clientWidth+2)+'px';mirror.style.height=(ed.clientHeight+2)+'px';mirror.scrollTop=ed.scrollTop;mirror.scrollLeft=ed.scrollLeft;proposal.textContent=suggestion||'—';}
+// A proposal is bound to a concrete UI and canonical-document generation.
+function candidateIsCurrent(){
+ return Boolean(suggestion&&candidateIdentity&&!failed&&!resetBusy&&!composing&&consent.checked&&atEnd()&&
+   candidateIdentity.generation===generation&&candidateIdentity.sequence===sequence&&pendingCount===0&&ackSequence===sequence&&
+   candidateIdentity.version===currentVersion&&candidateIdentity.mode===mode.value&&
+   candidateIdentity.cursor===[...ed.value].length&&dismissed!==sequence);
+}
+// Explicit precedence: error > mutation > consent > IME > unacked edit > dismissal > offered > learning > ready.
+function interactionPhase(){
+ if(failed)return 'error';
+ if(resetBusy)return 'mutating';
+ if(!consent.checked)return 'locked';
+ if(composing)return 'composing';
+ if(pendingCount>0||ackSequence!==sequence)return 'syncing';
+ if(dismissed===sequence&&sequence>0)return 'dismissed';
+ if(candidateIsCurrent())return 'offered';
+ if(trainingPending)return 'learning';
+ return 'ready';
+}
+function refreshPhase(){
+ const labels={error:'停止中',mutating:'記憶を更新中',locked:'記録OFF',composing:'日本語変換中',syncing:'入力を同期中',dismissed:'候補を非表示',offered:'Tabで補完',learning:'学習中',ready:'入力できます'};
+ const state=interactionPhase();document.body.dataset.interactionPhase=state;
+ const label=document.querySelector('#phase');if(label)label.textContent=labels[state];
+}
+function paint(){
+ prefix.textContent=ed.value;
+ ghost.textContent=candidateIsCurrent()?suggestion:'';
+ mirror.style.width=(ed.clientWidth+2)+'px';mirror.style.height=(ed.clientHeight+2)+'px';
+ mirror.scrollTop=ed.scrollTop;mirror.scrollLeft=ed.scrollLeft;
+ proposal.textContent=candidateIsCurrent()?suggestion:'—';
+ refreshPhase();
+}
 function cancelPoll(){clearTimeout(timer);timer=null;pollSerial++;}
-function clear(){suggestion='';paint();}
-function fail(e){failed=true;cancelPoll();clear();consent.checked=false;ed.disabled=true;errorBox.textContent='処理を停止しました：'+e.message+'。リセットして再開してください。';}
-function render(out){if(out.learning_error){errorBox.textContent=out.learning_error;return;}errorBox.textContent='';status.textContent=`学習済み：${out.typed_training_chars??0}文字 / 記憶語：${out.unique_words??0} / ${out.learning_pending?'学習反映待ち（入力できます）':'学習反映済み'}`;if(!suggestion&&dismissed!==sequence&&!out.stale&&atEnd()&&out.cursor===[...ed.value].length){suggestion=out.suggestion||'';paint();}}
+function clear(){suggestion='';candidateIdentity=null;paint();}
+function fail(e){failed=true;cancelPoll();clear();consent.checked=false;ed.disabled=true;errorBox.textContent='処理を停止しました：'+e.message+'。リセットして再開してください。';refreshPhase();}
+function render(out){
+ if(out.learning_error){errorBox.textContent=out.learning_error;refreshPhase();return;}
+ trainingPending=Boolean(out.learning_pending);errorBox.textContent='';
+ status.textContent=`学習済み：${out.typed_training_chars??0}文字 / 記憶語：${out.unique_words??0} / ${trainingPending?'学習反映待ち（入力できます）':'学習反映済み'}`;
+ if(!suggestion&&dismissed!==sequence&&!out.stale&&out.version===currentVersion&&
+    (out.sequence===undefined||out.sequence===sequence)&&atEnd()&&out.cursor===[...ed.value].length){
+  suggestion=out.suggestion||'';
+  candidateIdentity=suggestion?{generation,sequence,version:currentVersion,mode:mode.value,cursor:out.cursor}:null;
+ }
+ paint();
+}
 function pollSuggestions(gen,seq,serial,attempt=0){
  if(failed||resetBusy||gen!==generation||seq!==sequence||composing||!consent.checked||!atEnd()||dismissed===seq)return;
  timer=setTimeout(async()=>{try{
-  const out=await post('/suggestion',{doc_id:DOC,version:currentVersion,cursor:[...ed.value].length,mode:mode.value});
-  if(gen!==generation||seq!==sequence||serial!==pollSerial||composing||!consent.checked||!atEnd())return;
+  const requestedVersion=currentVersion,requestedCursor=[...ed.value].length,requestedMode=mode.value;
+  const out=await post('/suggestion',{doc_id:DOC,version:requestedVersion,cursor:requestedCursor,mode:requestedMode});
+  if(gen!==generation||seq!==sequence||serial!==pollSerial||composing||!consent.checked||!atEnd()||requestedMode!==mode.value||requestedVersion!==currentVersion||requestedCursor!==[...ed.value].length)return;
   render(out);
   if(out.learning_pending&&!out.learning_error&&attempt<200)pollSuggestions(gen,seq,serial,attempt+1);
  }catch(e){if(gen===generation&&seq===sequence)fail(e);}},40);
@@ -47,14 +185,15 @@ function capture(){
  const text=fresh.slice(a,fresh.length-b).join('');
  const ev={doc_id:DOC,sequence:++sequence,input_mono_ms:performance.now(),kind:a===old.length&&b===0?'insert':'replace',start:a,end:old.length-b,text,origin,allowed:true,mode:mode.value};
  origin='typed';previous=value;dismissed=-1;cancelPoll();clear();
- const gen=generation;pendingCount++;
+ const gen=generation;pendingCount++;refreshPhase();
  queue=queue.then(async()=>{if(failed)return;const out=await post('/event',ev);
-  if(gen===generation&&ev.sequence===sequence&&consent.checked&&!composing){ackSequence=ev.sequence;currentVersion=out.version;if(ev.mode===mode.value)render(out);if(out.learning_pending||ev.mode!==mode.value)pollSuggestions(gen,sequence,pollSerial);}
- }).catch(e=>{if(gen===generation)fail(e);}).finally(()=>{pendingCount--;});
+  if(ev.sequence>ackSequence){ackSequence=ev.sequence;currentVersion=out.version;}
+  if(gen===generation&&ev.sequence===sequence&&consent.checked&&!composing){if(ev.mode===mode.value)render(out);if(out.learning_pending||ev.mode!==mode.value)pollSuggestions(gen,sequence,pollSerial);}
+ }).catch(e=>{if(gen===generation)fail(e);}).finally(()=>{pendingCount--;paint();});
 }
-consent.onchange=()=>{ed.disabled=!consent.checked||failed;generation++;cancelPoll();clear();status.textContent=consent.checked?'この入力欄だけを記録中。':'以後の記録を停止しました。記憶の消去はリセット。';if(consent.checked&&!failed)ed.focus();};
+consent.onchange=()=>{ed.disabled=!consent.checked||failed;generation++;cancelPoll();clear();status.textContent=consent.checked?'この入力欄だけを記録中。':'以後の記録を停止しました。記憶の消去はリセット。';if(consent.checked&&!failed){ed.focus();const gen=generation;queue.then(()=>{if(gen===generation&&consent.checked&&!failed&&!composing&&ackSequence===sequence){cancelPoll();pollSuggestions(gen,sequence,pollSerial);}});}refreshPhase();};
 ed.addEventListener('compositionstart',()=>{composing=true;cancelPoll();clear();});
-ed.addEventListener('compositionend',()=>{composing=false;setTimeout(capture,0);});
+ed.addEventListener('compositionend',()=>{composing=false;paint();setTimeout(()=>{const unchanged=ed.value===previous;capture();if(unchanged&&ackSequence===sequence&&!failed&&consent.checked&&dismissed!==sequence){cancelPoll();pollSuggestions(generation,sequence,pollSerial);}},0);});
 ed.addEventListener('paste',()=>{origin='paste';});
 ed.addEventListener('beforeinput',e=>{if(['insertFromPaste','insertFromDrop','historyUndo','historyRedo'].includes(e.inputType))origin='paste';});
 ed.addEventListener('input',e=>{paint();if(!e.isComposing)capture();});
@@ -64,27 +203,63 @@ ed.addEventListener('click',()=>{if(!atEnd()){cancelPoll();clear();}else if(ackS
 ed.addEventListener('keydown',e=>{
  if(composing||e.isComposing)return;
  if(e.key==='Escape'){dismissed=sequence;cancelPoll();clear();return;}
- if(e.key==='Tab'&&suggestion&&ackSequence===sequence&&consent.checked&&!resetBusy&&atEnd()){
+ if(e.key==='Tab'&&candidateIsCurrent()&&ackSequence===sequence){
   e.preventDefault();origin='model';ed.setRangeText(suggestion,ed.selectionStart,ed.selectionEnd,'end');capture();return;
  }
  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'].includes(e.key)){cancelPoll();clear();}
 });
 mode.onchange=()=>{dismissed=-1;cancelPoll();clear();if(ackSequence===sequence)pollSuggestions(generation,sequence,pollSerial);};
 document.querySelector('#export').onclick=async()=>{try{await queue;const r=await fetch('/trace',{headers:{'X-Tab-Token':TOKEN}});if(!r.ok)throw Error('export failed');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(await r.json(),null,2)],{type:'application/json'}));a.download='personal_tab_trace.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}catch(e){fail(e);}};
-document.querySelector('#reset').onclick=async()=>{
- if(resetBusy)return;resetBusy=true;generation++;cancelPoll();clear();ed.disabled=true;
- try{await queue;await post('/reset',{});ed.value='';previous='';sequence=ackSequence=currentVersion=0;dismissed=-1;failed=false;errorBox.textContent='';clear();status.textContent='記憶を消しました。';}
- catch(e){fail(e);}finally{resetBusy=false;ed.disabled=!consent.checked||failed;if(!ed.disabled)ed.focus();}
+const resetPanel=document.querySelector('#reset-confirm'),importPanel=document.querySelector('#import-confirm');
+document.querySelector('#reset').onclick=()=>{
+ if(resetBusy)return;
+ importPanel.hidden=true;stagedImport=null;
+ resetPanel.hidden=false;
+ document.querySelector('#confirm-reset').focus();
+};
+document.querySelector('#cancel-reset').onclick=()=>{resetPanel.hidden=true;document.querySelector('#reset').focus();};
+document.querySelector('#confirm-reset').onclick=async()=>{
+ if(resetBusy)return;resetPanel.hidden=true;
+ resetBusy=true;generation++;cancelPoll();clear();ed.disabled=true;
+ try{
+  await queue;await post('/reset',{});
+  ed.value='';previous='';sequence=ackSequence=currentVersion=0;dismissed=-1;failed=false;trainingPending=false;errorBox.textContent='';
+  clear();status.textContent='記憶を消しました。';
+ }catch(e){fail(e);}
+ finally{resetBusy=false;ed.disabled=!consent.checked||failed;if(!ed.disabled)ed.focus();paint();}
 };
 function downloadJSON(value,name){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
 document.querySelector('#save-memory').onclick=async()=>{try{await queue;const r=await fetch('/memory',{headers:{'X-Tab-Token':TOKEN}});if(!r.ok)throw Error('memory export failed');downloadJSON(await r.json(),'personal_tab_memory.json');}catch(e){errorBox.textContent=e.message;}};
 document.querySelector('#choose-memory').onclick=()=>{if(!consent.checked){errorBox.textContent='読み込む前に、このエディタの学習を許可してください。';return;}document.querySelector('#load-memory').click();};
-document.querySelector('#load-memory').onchange=async function(){
- const file=this.files[0];if(!file||resetBusy||!consent.checked)return;
- if(file.size>950000){errorBox.textContent='メモリファイルが大きすぎます（950KBまで）。';this.value='';return;}
+let stagedImport=null;
+document.querySelector('#load-memory').onchange=function(){
+ const file=this.files[0];this.value='';
+ if(!file||resetBusy||!consent.checked)return;
+ if(file.size>950000){errorBox.textContent='メモリファイルが大きすぎます（950KBまで）。';return;}
+ stagedImport=file;resetPanel.hidden=true;
+ document.querySelector('#import-name').textContent=`${file.name} を読み込むと、現在の記憶と編集中の文章が置き換わります。`;
+ importPanel.hidden=false;
+ document.querySelector('#confirm-import').focus();
+};
+document.querySelector('#cancel-import').onclick=()=>{
+ stagedImport=null;importPanel.hidden=true;
+ document.querySelector('#choose-memory').focus();
+};
+document.querySelector('#confirm-import').onclick=async()=>{
+ if(!stagedImport||resetBusy||!consent.checked)return;
+ const file=stagedImport;stagedImport=null;importPanel.hidden=true;
  resetBusy=true;generation++;cancelPoll();clear();ed.disabled=true;
- try{await queue;const memory=JSON.parse(await file.text());const out=await post('/memory',{allowed:true,memory});ed.value=previous=out.text;sequence=ackSequence=0;currentVersion=out.version;failed=false;dismissed=-1;errorBox.textContent='';clear();status.textContent='記憶を再構築中。';}
- catch(e){errorBox.textContent='読み込みを中止しました：'+e.message;}
- finally{resetBusy=false;this.value='';ed.disabled=!consent.checked||failed;if(!ed.disabled){ed.focus();ed.setSelectionRange(ed.value.length,ed.value.length);pollSuggestions(generation,sequence,pollSerial);}}
+ try{
+  await queue;
+  const memory=JSON.parse(await file.text());
+  const out=await post('/memory',{allowed:true,memory});
+  ed.value=previous=out.text;sequence=ackSequence=0;currentVersion=out.version;
+  failed=false;dismissed=-1;trainingPending=true;errorBox.textContent='';clear();status.textContent='記憶を再構築中。';
+ }catch(e){errorBox.textContent='読み込みを中止しました：'+e.message;}
+ finally{
+  resetBusy=false;ed.disabled=!consent.checked||failed;
+  if(!ed.disabled){ed.focus();ed.setSelectionRange(ed.value.length,ed.value.length);pollSuggestions(generation,sequence,pollSerial);}
+  paint();
+ }
 };paint();
 </script></body></html>

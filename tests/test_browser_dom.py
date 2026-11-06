@@ -17,6 +17,11 @@ window.fetch=async (path,options={})=>{
   while(window.__held)await new Promise(r=>setTimeout(r,10));
   const old=[...window.__text];window.__text=old.slice(0,e.start).join('')+e.text+old.slice(e.end).join('');window.__version++;
  }
+ if(path==='/memory' && options.method==='POST'){
+  const doc=e.memory?.documents?.find(item=>item.id==='document');
+  window.__text=doc?.text||'';window.__version=doc?1:0;
+  return {ok:true,json:async()=>({restored:true,text:window.__text,version:window.__version})};
+ }
  if(path==='/reset'){window.__text='';window.__version=0;return {ok:true,json:async()=>({reset:true})};}
  const value={suggestion:e.mode==='statistical'?'':window.__text.endsWith('コンピ')?'ュータ':'',cursor:[...window.__text].length,version:window.__version,sequence:e.sequence,recorded:true,typed_training_chars:[...window.__text].length,unique_words:1,learning_pending:false,processing_ms:0.1};
  return {ok:true,json:async()=>value};
@@ -79,7 +84,106 @@ def test_dom_reset_ignores_old_inflight_response(page):
     page.evaluate('window.__held=true')
     page.keyboard.insert_text('コンピュータ。コンピュータ。コンピ')
     page.locator('#reset').click()
+    page.locator('#confirm-reset').click()
     page.evaluate('window.__held=false')
     page.wait_for_function('window.__testState.idle')
     pw.expect(page.locator('#editor')).to_have_value('')
     pw.expect(page.locator('#ghost')).to_have_text('')
+
+def test_consent_pause_resume_during_inflight_edit_recovers_ack_and_candidate(page):
+    page,pw=page
+    page.evaluate('window.__held=true')
+    page.keyboard.insert_text('コンピュータ。コンピュータ。コンピ')
+    page.wait_for_function('window.__events.length === 1')
+    page.locator('#consent').uncheck()
+    page.locator('#consent').check()
+    page.evaluate('window.__held=false')
+    page.wait_for_function('window.__testState.idle')
+    page.wait_for_function('window.__testState.ackSequence === window.__testState.sequence',timeout=5000)
+    pw.expect(page.locator('#ghost')).to_have_text('ュータ',timeout=5000)
+
+def test_explicit_interaction_states_follow_ime_offer_and_dismiss(page):
+    page,pw=page
+    assert page.locator('body').get_attribute('data-interaction-phase')=='ready'
+    page.evaluate('window.__held=true')
+    page.keyboard.insert_text('コンピュータ。コンピュータ。コンピ')
+    pw.expect(page.locator('body')).to_have_attribute('data-interaction-phase','syncing')
+    page.dispatch_event('#editor','compositionstart')
+    pw.expect(page.locator('body')).to_have_attribute('data-interaction-phase','composing')
+    page.dispatch_event('#editor','compositionend')
+    page.evaluate('window.__held=false')
+    pw.expect(page.locator('#ghost')).to_have_text('ュータ',timeout=5000)
+    pw.expect(page.locator('body')).to_have_attribute('data-interaction-phase','offered')
+    page.locator('#editor').press('Escape')
+    pw.expect(page.locator('body')).to_have_attribute('data-interaction-phase','dismissed')
+    pw.expect(page.locator('#ghost')).to_have_text('')
+
+
+def test_stale_version_cannot_offer_ghost_even_if_server_omits_stale_flag(page):
+    page,pw=page
+    page.keyboard.insert_text('コンピュータ。コンピュータ。コンピ')
+    pw.expect(page.locator('#ghost')).to_have_text('ュータ')
+    page.evaluate('''() => {
+      const oldFetch = window.fetch;
+      window.fetch = async (...args) => {
+        const reply = await oldFetch(...args);
+        if (args[0] !== '/suggestion') return reply;
+        const payload = await reply.json();
+        payload.version -= 1;
+        return {ok:true, json:async()=>payload};
+      };
+      clear();
+      cancelPoll();
+      pollSuggestions(generation,sequence,pollSerial);
+    }''')
+    page.wait_for_timeout(180)
+    pw.expect(page.locator('#ghost')).to_have_text('')
+
+def test_reset_and_cancel_are_explicit_without_data_loss(page):
+    page,pw=page
+    page.keyboard.insert_text('覚えておきたい文章。')
+    pw.expect(page.locator('#editor')).to_have_value('覚えておきたい文章。')
+    page.locator('#reset').click()
+    pw.expect(page.locator('#editor')).to_have_value('覚えておきたい文章。')
+    pw.expect(page.locator('#reset-confirm')).to_be_visible()
+    page.locator('#cancel-reset').click()
+    pw.expect(page.locator('#editor')).to_have_value('覚えておきたい文章。')
+    page.locator('#reset').click()
+    page.locator('#confirm-reset').click()
+    pw.expect(page.locator('#editor')).to_have_value('')
+    pw.expect(page.locator('#reset-confirm')).to_be_hidden()
+
+
+def test_import_requires_confirmation_before_replacing_existing_text(page):
+    page,pw=page
+    page.keyboard.insert_text('保持している文章。')
+    page.wait_for_function('window.__testState.idle')
+    file={'name':'memory.json','mimeType':'application/json','buffer':b'{"schema":"personal-tab-memory/v1","documents":[]}'}
+    page.locator('#load-memory').set_input_files(file)
+    pw.expect(page.locator('#import-confirm')).to_be_visible()
+    pw.expect(page.locator('#editor')).to_have_value('保持している文章。')
+    page.locator('#cancel-import').click()
+    pw.expect(page.locator('#import-confirm')).to_be_hidden()
+    pw.expect(page.locator('#editor')).to_have_value('保持している文章。')
+
+def test_confirmed_import_updates_editor_and_restarts_state_machine(page):
+    page,pw=page
+    page.keyboard.insert_text('古い文章。')
+    page.wait_for_function('window.__testState.idle')
+    blob='{"schema":"personal-tab-memory/v1","documents":[{"id":"document","text":"新しい文章。","spans":[{"start":0,"end":6,"origin":"typed"}]}]}'.encode('utf8')
+    page.locator('#load-memory').set_input_files({'name':'memory.json','mimeType':'application/json','buffer':blob})
+    pw.expect(page.locator('#editor')).to_have_value('古い文章。')
+    page.locator('#confirm-import').click()
+    pw.expect(page.locator('#editor')).to_have_value('新しい文章。')
+    pw.expect(page.locator('body')).not_to_have_attribute('data-interaction-phase','mutating')
+    pw.expect(page.locator('#import-confirm')).to_be_hidden()
+
+def test_syncing_state_never_displays_a_stale_offered_candidate(page):
+    page,pw=page
+    page.keyboard.insert_text('コンピュータ。コンピュータ。コンピ')
+    pw.expect(page.locator('#ghost')).to_have_text('ュータ')
+    page.evaluate('pendingCount++;paint()')
+    pw.expect(page.locator('body')).to_have_attribute('data-interaction-phase','syncing')
+    pw.expect(page.locator('#ghost')).to_have_text('')
+    page.evaluate('pendingCount--;paint()')
+    pw.expect(page.locator('#ghost')).to_have_text('ュータ')

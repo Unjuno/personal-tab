@@ -339,6 +339,26 @@ class AsyncSession:
                       processing_ms=(time.perf_counter_ns() - start_time) / 1e6)
         return result
 
+    def _learning_phase(self, worker_state: dict[str, Any]) -> str:
+        """Single observable FSM for the training snapshot lifecycle.
+
+        This is a derived state, not a second source of truth. Canonical
+        versions/epochs and the worker's queue remain authoritative.
+        """
+        if self._error or worker_state['error']:
+            return 'failed'
+        if self.request_id == 0:
+            return 'empty'
+        if self.snapshot is None:
+            if self.epoch > 0 and self.trace.texts:
+                return 'rebuilding'
+            if worker_state['in_flight']:
+                return 'training'
+            return 'queued'
+        if self.snapshot['request_id'] < self.request_id:
+            return 'updating'
+        return 'ready'
+
     def suggest(self, *, doc_id: str, version: int | None = None,
                 cursor: int | None = None, mode: str = 'terms') -> dict[str, Any]:
         start_time = time.perf_counter_ns()
@@ -348,7 +368,9 @@ class AsyncSession:
         current = self.trace.texts.get(doc_id, '')
         v = self.trace.versions.get(doc_id, 0)
         state = self.worker.stats()
+        phase = self._learning_phase(state)
         result = {'suggestion': '', 'version': v, 'sequence': self.sequences.get(doc_id, 0),
+                  'learning_phase': phase,
                   'epoch': self.epoch, 'trained_request': self.snapshot['request_id'] if self.snapshot else 0,
                   'learning_pending': self.snapshot is None or self.snapshot['request_id'] < self.request_id,
                   'learning_error': self._error or state['error'],

@@ -60,6 +60,7 @@ def test_browser_real_async_tab_ime_reset_and_provenance():
                 time.sleep(.15)
                 pw.expect(page.locator('#ghost')).to_have_text('')
                 page.locator('#reset').click()
+                page.locator('#confirm-reset').click()
                 pw.expect(editor).to_have_value('')
                 page.keyboard.insert_text('コンピ')
                 page.wait_for_function("window.__testState?.idle === true")

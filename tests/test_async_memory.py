@@ -194,3 +194,18 @@ def test_trace_limits_reject_without_mutation():
         s.MAX_TRACE_CHARS=2
         with pytest.raises(ValueError):s.apply(event(text='あいう'))
         assert not s.trace.texts and not s.sequences
+
+def test_explicit_learning_phase_is_coherent_across_delayed_training_and_rebuild():
+    with AsyncSession(worker_delay=.2) as s:
+        assert s.suggest(doc_id='d')['learning_phase']=='empty'
+        pending=s.apply(event())
+        assert pending['learning_phase'] in {'queued','training'}
+        ready=settled(s)
+        assert ready['learning_phase']=='ready'
+        edit=s.apply(event(2,'新',kind='replace',start=0,end=1))
+        assert edit['learning_phase']=='rebuilding'
+        assert not edit['suggestion']
+        assert settled(s)['learning_phase']=='ready'
+        s.worker._process.terminate()
+        s.worker._process.join(timeout=2)
+        assert s.suggest(doc_id='d')['learning_phase']=='failed'
